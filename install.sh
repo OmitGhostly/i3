@@ -374,25 +374,47 @@ prepare_shell_rc() {
   return 0
 }
 
-# add the Pokemon fastfetch line to the shell rc files (once; an older kitty-only line is upgraded)
+# add the Pokemon fastfetch line to the shell rc files (once; an older kitty-only line is upgraded).
+# In ~/.zshrc it goes on the very first lines: prompt themes with an "instant prompt" (Powerlevel10k - CachyOS's
+# default zsh setup, many oh-my-zsh ones) draw the prompt before the rest of ~/.zshrc runs and warn about anything
+# printed after that, and fastfetch also asks the terminal things, which only works above that point.
+# An update (--update) moves a greeting you already have to the top, but never adds one you did not choose.
 install_shell_hook() {
-  [ "$do_pokemon" -eq 1 ] || return 0
-  local rc marker='# i3wm-dots: pokemon fastfetch'
+  [ "$do_pokemon" -eq 1 ] || [ "$update_mode" -eq 1 ] || return 0
+  local rc real tmp top marker='# i3wm-dots: pokemon fastfetch'
   # I3DOTS_POKEFETCH (not exported) makes sure the greeting shows only once per shell, even if the line is sourced twice
   local line='[ -z "$I3DOTS_POKEFETCH" ] && { [ -n "$KITTY_WINDOW_ID" ] || [ "$TERM_PROGRAM" = ghostty ]; } && [ -x "$HOME/.config/i3/scripts/PokeFetch.sh" ] && { I3DOTS_POKEFETCH=1; "$HOME/.config/i3/scripts/PokeFetch.sh"; }'
   for rc in "${RC_FILES[@]}"; do
+    top=0; [ "${rc##*/}" = .zshrc ] && top=1
     if grep -qF "$marker" "$rc" 2>/dev/null; then
-      grep -qF 'I3DOTS_POKEFETCH' "$rc" && [ "$(grep -cF "$marker" "$rc")" -eq 1 ] && continue
-      say "refreshing the pokemon fastfetch greeting in $rc (one greeting per terminal)"
-      [ "$dry" -eq 1 ] && continue
-      # drop every old copy (marker line + the line after it), then add a single fresh one
-      CLEANUP+=("$rc.i3tmp")
-      awk -v m="$marker" 'skip{skip=0; next} index($0,m){skip=1; next} {print}' "$rc" > "$rc.i3tmp" \
-        && printf '\n%s\n%s\n' "$marker" "$line" >> "$rc.i3tmp" && mv "$rc.i3tmp" "$rc"
-      continue
+      # already there, once, the current version, and (zsh) on the first line: nothing to do
+      if grep -qF 'I3DOTS_POKEFETCH' "$rc" && [ "$(grep -cF "$marker" "$rc")" -eq 1 ] \
+         && { [ "$top" -eq 0 ] || [ "$(head -n 1 "$rc")" = "$marker" ]; }; then
+        continue
+      fi
+      if [ "$top" -eq 1 ]; then say "moving the pokemon fastfetch greeting to the top of $rc (before the prompt theme starts)"
+      else say "refreshing the pokemon fastfetch greeting in $rc (one greeting per terminal)"; fi
+    else
+      [ "$update_mode" -eq 1 ] && continue
+      say "adding the pokemon fastfetch greeting to $rc (kitty and ghostty only)"
     fi
-    say "adding the pokemon fastfetch greeting to $rc (kitty and ghostty only)"
-    [ "$dry" -eq 1 ] || printf '\n%s\n%s\n' "$marker" "$line" >> "$rc"
+    [ "$dry" -eq 1 ] && continue
+    # write the real file (a ~/.zshrc linked from a dotfiles folder stays a link), through a copy that keeps its
+    # permissions; every old copy of the greeting (marker line + the line after it, and the blank line before it)
+    # goes, and a single fresh one is added: first thing in ~/.zshrc, last thing in ~/.bashrc
+    real="$(readlink -f -- "$rc" 2>/dev/null)"; [ -n "$real" ] || real="$rc"
+    tmp="$real.i3tmp"; CLEANUP+=("$tmp")
+    cp -p -- "$real" "$tmp" || continue
+    {
+      [ "$top" -eq 1 ] && printf '%s\n%s\n' "$marker" "$line"
+      awk -v m="$marker" 'skip { skip = 0; next }
+           index($0, m) == 1 { skip = 1; blank = 0; next }
+           { if (blank) print ""; blank = 0 }
+           /^$/ { blank = 1; next }
+           { print }
+           END { if (blank) print "" }' "$real"
+      [ "$top" -eq 1 ] || printf '\n%s\n%s\n' "$marker" "$line"
+    } >"$tmp" && mv -f -- "$tmp" "$real"
   done
 }
 
