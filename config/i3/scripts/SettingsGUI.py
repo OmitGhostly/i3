@@ -31,7 +31,7 @@ import shutil
 import subprocess
 import sys
 
-CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "i3")
+CONFIG_DIR = os.path.join((os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")), "i3")
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 # Linux, or FreeBSD (GhostBSD too), OpenBSD, NetBSD: some things work differently there (the tests set I3DOTS_OS)
 SYSTEM = {"ghostbsd": "freebsd"}.get((os.environ.get("I3DOTS_OS") or os.uname().sysname).lower(),
@@ -698,7 +698,7 @@ def _write_if_changed(path, text):
     os.replace(path + ".i3tmp", path)
 
 
-XSETTINGSD_CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "xsettingsd",
+XSETTINGSD_CONF = os.path.join((os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")), "xsettingsd",
                                "xsettingsd.conf")
 XPROFILE_MARK = ("# >>> i3wm-dots cursor (Settings > Mouse > Mouse cursor) >>>",
                  "# <<< i3wm-dots cursor <<<")
@@ -835,10 +835,10 @@ def apply_cursor(settings):
 
 
 # ------------------------------------------------------------------ window opacity (picom)
-PICOM_CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "picom", "picom.conf")
+PICOM_CONF = os.path.join((os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")), "picom", "picom.conf")
 OPACITY_DEFAULT = {"active": 100, "inactive": 95, "terminal": 95}
-GHOSTTY_CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "ghostty", "config")
-KITTY_CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "kitty", "kitty.conf")
+GHOSTTY_CONF = os.path.join((os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")), "ghostty", "config")
+KITTY_CONF = os.path.join((os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")), "kitty", "kitty.conf")
 
 
 def set_conf_line(path, pattern, line):
@@ -918,7 +918,7 @@ def apply_picom_opacity(settings, restart=False):
 # ------------------------------------------------------------------ terminal themes (Ghostty, kitty)
 THEME_DEFAULT = {"ghostty": "mono", "kitty": "01-Wallust"}       # the shipped monochrome themes
 HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})\Z")
-_CFG_HOME = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+_CFG_HOME = (os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"))
 KITTY_THEME_DIR = os.path.join(_CFG_HOME, "kitty", "kitty-themes")
 GHOSTTY_THEME_DIRS = [os.path.join(_CFG_HOME, "ghostty", "themes"), "/usr/share/ghostty/themes",
                       "/usr/local/share/ghostty/themes", "/opt/ghostty/share/ghostty/themes"]
@@ -1249,6 +1249,136 @@ def _accent_conf(c):
             "ACCENT=%s\nACCENT_DIM=%s\nACCENT_MUTED=%s\n" % (c["A"][1:], c["S"][1:], c["D"][1:]))
 
 
+YAZI_THEME = os.path.join(_CFG_HOME, "yazi", "theme.toml")
+YAZI_MARK = "# i3wm-dots:"          # the theme's first line: while it is there, the colour follows Settings > Colors
+
+
+def _yazi_theme(c):
+    """yazi (the file manager) in black and greys with the accent colour. Only sections every yazi from 25.2 on knows
+    or skips: yazi 26 refuses a theme with a section it does not know, older ones ignore the newer sections."""
+    c = dict(c, T=readable_on(c["A"]))          # text on the accent colour
+    return """# i3wm-dots: yazi in black and greys with your accent colour. The Settings window (Colors) rewrites this file
+# when you change the colour - delete these first lines to make it your own, it is then left alone.
+
+[mgr]
+cwd             = { fg = "%(A)s", bold = true }
+find_keyword    = { fg = "%(T)s", bg = "%(A)s", bold = true }
+find_position   = { fg = "%(S)s", bold = true, italic = true }
+symlink_target  = { fg = "#8c8c8c", italic = true }
+marker_copied   = { fg = "#e6e6e6", bg = "#e6e6e6" }
+marker_cut      = { fg = "#6e6e6e", bg = "#6e6e6e" }
+marker_marked   = { fg = "%(S)s", bg = "%(S)s" }
+marker_selected = { fg = "%(A)s", bg = "%(A)s" }
+count_copied    = { fg = "#000000", bg = "#e6e6e6" }
+count_cut       = { fg = "#000000", bg = "#8c8c8c" }
+count_selected  = { fg = "%(T)s", bg = "%(A)s" }
+border_symbol   = "│"
+border_style    = { fg = "#303030" }
+# (the highlighted row in yazi before 26 - newer ones use [indicator] below)
+hovered         = { fg = "%(T)s", bg = "%(A)s" }
+preview_hovered = { fg = "#000000", bg = "#8c8c8c" }
+
+[indicator]
+parent  = { fg = "#000000", bg = "#8c8c8c" }
+current = { fg = "%(T)s", bg = "%(A)s" }
+preview = { fg = "#000000", bg = "#8c8c8c" }
+
+[tabs]
+active   = { fg = "%(T)s", bg = "%(A)s", bold = true }
+inactive = { fg = "#8c8c8c", bg = "#1c1c1c" }
+
+[mode]
+normal_main = { fg = "%(T)s", bg = "%(A)s", bold = true }
+normal_alt  = { fg = "%(A)s", bg = "#1c1c1c" }
+select_main = { fg = "#000000", bg = "#e6e6e6", bold = true }
+select_alt  = { fg = "#e6e6e6", bg = "#1c1c1c" }
+unset_main  = { fg = "#000000", bg = "#8c8c8c", bold = true }
+unset_alt   = { fg = "#8c8c8c", bg = "#1c1c1c" }
+
+[status]
+perm_type       = { fg = "%(A)s" }
+perm_read       = { fg = "#e6e6e6" }
+perm_write      = { fg = "#b3b3b3" }
+perm_exec       = { fg = "%(S)s" }
+perm_sep        = { fg = "#4a4a4a" }
+progress_label  = { fg = "#ffffff", bold = true }
+progress_normal = { fg = "%(A)s", bg = "#303030" }
+progress_error  = { fg = "#ffffff", bg = "#6e6e6e" }
+
+[which]
+mask            = { bg = "#0a0a0a" }
+cand            = { fg = "%(A)s" }
+rest            = { fg = "#6e6e6e" }
+desc            = { fg = "#e6e6e6" }
+separator_style = { fg = "#4a4a4a" }
+
+[confirm]
+border  = { fg = "%(A)s" }
+title   = { fg = "%(A)s", bold = true }
+btn_yes = { fg = "%(T)s", bg = "%(A)s", bold = true }
+btn_no  = { fg = "#e6e6e6" }
+
+[spot]
+border   = { fg = "%(A)s" }
+title    = { fg = "%(A)s", bold = true }
+tbl_col  = { fg = "%(A)s" }
+tbl_cell = { fg = "%(T)s", bg = "%(A)s" }
+
+[notify]
+title_info  = { fg = "#e6e6e6", bold = true }
+title_warn  = { fg = "%(A)s", bold = true }
+title_error = { fg = "#ffffff", bold = true, underline = true }
+
+[pick]
+border   = { fg = "%(A)s" }
+active   = { fg = "%(T)s", bg = "%(A)s" }
+inactive = { fg = "#e6e6e6" }
+
+[input]
+border   = { fg = "%(A)s" }
+title    = { fg = "#e6e6e6" }
+value    = { fg = "#ffffff" }
+selected = { fg = "%(T)s", bg = "%(A)s" }
+
+[cmp]
+border   = { fg = "%(A)s" }
+active   = { fg = "%(T)s", bg = "%(A)s" }
+inactive = { fg = "#e6e6e6" }
+
+[tasks]
+border  = { fg = "%(A)s" }
+title   = { fg = "#e6e6e6" }
+hovered = { fg = "%(T)s", bg = "%(A)s" }
+
+[help]
+border  = { fg = "%(A)s" }
+chord   = { fg = "%(A)s" }
+action  = { fg = "#8c8c8c" }
+hovered = { fg = "%(T)s", bg = "%(A)s" }
+
+[filetype]
+rules = [
+  { url = "*/", fg = "%(A)s", bold = true },                       # folders
+  { url = "*", is = "orphan", fg = "#6e6e6e", italic = true },    # links that point nowhere
+  { url = "*", is = "link", fg = "#b3b3b3", italic = true },
+  { url = "*", is = "exec", fg = "#ffffff", bold = true },
+  { mime = "image/*", fg = "#d9d9d9" },
+  { mime = "{audio,video}/*", fg = "#bfbfbf" },
+  { mime = "application/{zip,rar,7z*,tar,gzip,xz,zstd,bzip*,lzma,compress,archive,cpio,arj,xar,ms-cab*}", fg = "#a6a6a6" },
+  { url = "*", fg = "#e6e6e6" },
+]
+""" % c
+
+
+def _yazi_theme_is_ours(path):
+    """The theme the installer put there (its first line), or none yet in the folder the installer made."""
+    try:
+        with open(path) as f:
+            return f.readline().startswith(YAZI_MARK)
+    except OSError:
+        return os.path.exists(os.path.join(os.path.dirname(path), ".i3wm-dots-installed"))
+
+
 def _write_generated(path, text):
     """Write a generated file only when it differs; returns True when it changed."""
     path = os.path.realpath(path)          # keep a symlinked (stow-managed) config a symlink
@@ -1331,6 +1461,8 @@ def _apply_colors(settings):
     gen("rofi", ROFI_COLORS, _rofi_colors(c))
     gen("dunst", DUNST_COLORS, _dunst_colors(c))
     gen("accent", ACCENT_CONF, _accent_conf(c))
+    if _yazi_theme_is_ours(YAZI_THEME):          # (a yazi theme of your own is never overwritten)
+        gen("yazi", YAZI_THEME, _yazi_theme(c))
     step("i3", _sub_in_file, I3_CONFIG, r"^set \$accent[ \t]+#[0-9a-fA-F]{6}[ \t]*$", lambda m: "set $accent %s" % accent)
     step("cava", _sub_in_file, CAVA_CONF, r"^gradient_color_([1-8]) = .*$",
          lambda m: "gradient_color_%s = '%s'" % (m.group(1), shade(accent, CAVA_STEPS[int(m.group(1)) - 1])))
@@ -3351,6 +3483,7 @@ def apply_keybinds(settings, reload=False):
 DEFAULTS_CONF = os.path.join(CONFIG_DIR, "defaults.conf")
 ROFI_TERMINAL = os.path.join(CONFIG_DIR, "rofi", "00-terminal.rasi")
 APP_NAMES = {
+    "yazi": "Yazi", "ranger": "ranger", "lf": "lf", "nnn": "nnn", "mc": "Midnight Commander", "vifm": "Vifm",
     "thunar": "Thunar", "dolphin": "Dolphin", "nautilus": "Nautilus (Files)", "nemo": "Nemo", "pcmanfm": "PCManFM",
     "pcmanfm-qt": "PCManFM-Qt", "caja": "Caja", "spacefm": "SpaceFM", "krusader": "Krusader", "doublecmd": "Double Commander",
     "ghostty": "Ghostty", "kitty": "kitty", "alacritty": "Alacritty", "wezterm": "WezTerm", "konsole": "Konsole",
@@ -3363,8 +3496,9 @@ APP_NAMES = {
     "floorp": "Floorp", "waterfox": "Waterfox", "opera": "Opera", "": "System default"}
 # slot -> (defaults.conf key, launcher script that reads it, fallback, installable choices)
 APP_SLOTS = {
-    "files": {"script": "LaunchFileManager.sh", "default": "thunar", "label": "file manager",
-              "choices": ["thunar", "dolphin", "nautilus", "nemo", "pcmanfm", "pcmanfm-qt", "caja", "spacefm", "krusader", "doublecmd"]},
+    "files": {"script": "LaunchFileManager.sh", "default": "yazi", "label": "file manager",
+              "choices": ["yazi", "thunar", "dolphin", "nautilus", "nemo", "pcmanfm", "pcmanfm-qt", "caja", "spacefm", "krusader",
+                          "doublecmd", "ranger", "lf", "nnn", "mc", "vifm"]},
     "term": {"script": "LaunchTerminal.sh", "default": "ghostty", "label": "terminal",
              "choices": ["ghostty", "kitty", "alacritty", "wezterm", "konsole", "gnome-terminal", "xfce4-terminal",
                          "tilix", "terminator", "lxterminal", "qterminal", "st", "urxvt", "xterm"]},
@@ -3402,9 +3536,16 @@ def read_defaults():
     return out
 
 
+def app_installed(cmd):
+    """On PATH, or where the launcher scripts also look: ~/.local/bin (yazi or kitty from their own downloads) and
+    /snap/bin (the Snap Store)."""
+    extra = os.pathsep.join([os.environ.get("PATH", ""), os.path.expanduser("~/.local/bin"), "/snap/bin"])
+    return bool(shutil.which(cmd.split()[0], path=extra)) if cmd.strip() else False
+
+
 def installed_choices(slot, current):
     """[(command, label)] for the apps from the list that are installed, plus the current one."""
-    cmds = [c for c in APP_SLOTS[slot]["choices"] if c == "" or shutil.which(c)]
+    cmds = [c for c in APP_SLOTS[slot]["choices"] if c == "" or app_installed(c)]
     if current not in cmds:
         cmds.append(current)
     seen, out = set(), []
@@ -4813,7 +4954,8 @@ def launch_gui(confirm=True, tab=None):
         entry.set_placeholder_text("command, e.g. mybrowser --private-window")
         entry.set_no_show_all(True)
         area.pack_start(entry, False, False, 0)
-        note = dim("Only programs found on this computer are listed. Other opens any command you type.")
+        note = dim("Only programs found on this computer are listed. Other opens any command you type."
+                   + (" Yazi and the other terminal file managers open in your terminal." if slot == "files" else ""))
         area.pack_start(note, False, False, 0)
         err = dim("")
         area.pack_start(err, False, False, 0)

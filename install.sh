@@ -202,7 +202,7 @@ fi
 packages_for() {
   local common="polybar picom dunst rofi kitty feh maim xdotool xclip xss-lock i3lock imagemagick
     brightnessctl pamixer playerctl pavucontrol redshift numlockx jq curl unzip arandr git mpv xdg-utils
-    fontconfig lxappearance fastfetch python3 bluez blueman clipmenu|copyq touchegg"
+    fontconfig lxappearance fastfetch python3 bluez blueman clipmenu|copyq touchegg file"
   case "$FAMILY" in
     fedora) echo "i3 xsettingsd dbus-tools|/usr/bin/dbus-update-activation-environment xorg-x11-server-Xorg xset|/usr/bin/xset xrdb|/usr/bin/xrdb xsetroot|/usr/bin/xsetroot adwaita-cursor-theme xrandr|/usr/bin/xrandr
                   xprop|/usr/bin/xprop xdpyinfo|/usr/bin/xdpyinfo setxkbmap|/usr/bin/setxkbmap xinput|/usr/bin/xinput
@@ -545,6 +545,124 @@ ensure_terminals() {
   done
 }
 
+# ---- the file manager: yazi (opens in the terminal; Thunar stays installed as the graphical one) -------------------
+# From your distro's repos when it has it (Arch, NetBSD, FreeBSD, openSUSE, ...); Fedora: the community COPR that
+# yazi's install page names; Debian/Ubuntu: the Snap Store; otherwise yazi's own release build (Linux x86_64/arm64).
+have_yazi() { command -v yazi >/dev/null 2>&1 || [ -x "$HOME/.local/bin/yazi" ] || [ -x /snap/bin/yazi ]; }
+yazi_version() {
+  local y; y="$(command -v yazi 2>/dev/null || { [ -x "$HOME/.local/bin/yazi" ] && echo "$HOME/.local/bin/yazi"; } || echo /snap/bin/yazi)"
+  "$y" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1
+}
+
+install_yazi() {
+  local had=0
+  pkg_installed yazi && had=1
+  if pkg_available yazi; then
+    say "installing yazi from your distro's repos"
+    pkg_install yazi && { [ "$had" -eq 1 ] || record_new_pkgs yazi; return 0; }
+  fi
+  case "$FAMILY" in
+    fedora)
+      local copr=lihaohong/yazi
+      say "installing yazi from the community COPR $copr (Fedora has no official package; yazi's install page names it)"
+      if run $SUDO dnf copr enable -y "$copr" \
+         || { { run $SUDO dnf install -y dnf5-plugins || run $SUDO dnf install -y dnf-plugins-core; } \
+              && run $SUDO dnf copr enable -y "$copr"; }; then
+        if run $SUDO dnf install -y yazi; then record copr "$copr"; [ "$had" -eq 1 ] || record_new_pkgs yazi; return 0; fi
+        run $SUDO dnf copr disable -y "$copr" >/dev/null 2>&1 || true     # it did not work: do not leave it on
+      fi ;;
+    debian)
+      if command -v snap >/dev/null 2>&1; then
+        say "installing yazi from the Snap Store (your release has no apt package)"
+        run $SUDO snap install yazi --classic && { record snap yazi; return 0; }
+      fi ;;
+  esac
+  install_yazi_release
+}
+
+# yazi's own release build (github.com/sxyazi/yazi: static, for x86_64 and arm64 Linux) into ~/.local/bin
+install_yazi_release() {
+  [ "$BSD" -eq 1 ] && return 1                       # (no BSD builds: only the package manager can install it there)
+  local arch dir tmp rc=1
+  case "$(uname -m)" in
+    x86_64|amd64)  arch=x86_64 ;;
+    aarch64|arm64) arch=aarch64 ;;
+    *) return 1 ;;
+  esac
+  command -v curl >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1 || return 1
+  say "installing yazi's official release build (github.com/sxyazi/yazi) into ~/.local/bin"
+  # (written down first, so a stopped install still has them listed - uninstall skips any that were never made)
+  record path "$HOME/.local/bin/yazi"; record path "$HOME/.local/bin/ya"
+  [ "$dry" -eq 1 ] && return 0
+  tmp="$(mktemp -d)"; CLEANUP+=("$tmp"); dir="$tmp/yazi-$arch-unknown-linux-musl"
+  if curl -fsSL --retry 2 -o "$tmp/yazi.zip" \
+          "https://github.com/sxyazi/yazi/releases/latest/download/yazi-$arch-unknown-linux-musl.zip" \
+     && unzip -qo "$tmp/yazi.zip" -d "$tmp" && "$dir/yazi" --version >/dev/null 2>&1 \
+     && mkdir -p "$HOME/.local/bin" \
+     && cp "$dir/yazi" "$HOME/.local/bin/.yazi.new" && cp "$dir/ya" "$HOME/.local/bin/.ya.new" \
+     && chmod 755 "$HOME/.local/bin/.yazi.new" "$HOME/.local/bin/.ya.new" \
+     && mv -f "$HOME/.local/bin/.yazi.new" "$HOME/.local/bin/yazi" && mv -f "$HOME/.local/bin/.ya.new" "$HOME/.local/bin/ya"; then
+    rc=0
+  fi
+  rm -rf "$tmp" "$HOME/.local/bin/.yazi.new" "$HOME/.local/bin/.ya.new"
+  return $rc
+}
+
+# what makes yazi's previews and search work: PDFs (poppler), archives (7-Zip), find (fd), search in files (ripgrep),
+# fuzzy find and jump to folders (fzf, zoxide). Best effort: whatever your repos have; none of it is required.
+yazi_extras() {
+  case "$FAMILY" in
+    arch)    echo "poppler 7zip|p7zip fd ripgrep fzf zoxide" ;;
+    fedora)  echo "poppler-utils 7zip|p7zip fd-find ripgrep fzf zoxide" ;;
+    debian)  echo "poppler-utils 7zip|p7zip-full fd-find ripgrep fzf zoxide" ;;
+    freebsd) echo "poppler-utils 7-zip|p7zip fd-find|fd ripgrep fzf zoxide" ;;
+    openbsd) echo "poppler-utils|poppler 7zip|p7zip fd ripgrep fzf zoxide" ;;
+    netbsd)  echo "poppler-utils|poppler 7-zip|p7zip fd|fd-find ripgrep fzf zoxide" ;;
+  esac
+}
+
+install_yazi_extras() {
+  local item alt pick want=() new=() skipped=() p alts=()
+  for item in $(yazi_extras); do
+    IFS='|' read -ra alts <<<"$item"; pick=""
+    for alt in "${alts[@]}"; do pkg_installed "$alt" && { pick="$alt"; break; }; done
+    if [ -z "$pick" ]; then
+      for alt in "${alts[@]}"; do
+        if [ "$dry" -eq 1 ] || pkg_available "$alt"; then pick="$alt"; break; fi
+      done
+    fi
+    if [ -n "$pick" ]; then want+=("$pick"); else skipped+=("${alts[0]}"); fi
+  done
+  [ "${#skipped[@]}" -gt 0 ] && echo "   yazi extras not in your repos (fine - yazi works without them): ${skipped[*]}"
+  for p in "${want[@]}"; do pkg_installed "$p" || new+=("$p"); done
+  [ "${#new[@]}" -gt 0 ] || return 0
+  say "installing yazi's preview and search helpers: ${new[*]}"
+  if ! pkg_install "${new[@]}"; then
+    for p in "${new[@]}"; do pkg_install "$p" >/dev/null 2>&1 || echo "   (could not install $p - yazi works without it)"; done
+  fi
+  record_new_pkgs "${new[@]}"
+}
+
+ensure_file_manager() {
+  say "checking the file manager: yazi (the default - it opens in the terminal)"
+  if have_yazi; then
+    echo "   yazi: already installed ($(yazi_version))"
+  elif [ "$do_packages" -eq 0 ]; then
+    echo "   yazi: not installed (--no-packages: Thunar opens instead until you install yazi)"
+    return 0
+  elif [ "$BSD" -eq 1 ] && [ "$dry" -eq 0 ] && ! pkg_available yazi; then
+    echo "   yazi: not packaged for $SYSNAME - Thunar is your file manager"
+    return 0
+  elif install_yazi && { [ "$dry" -eq 1 ] || have_yazi; }; then
+    echo "   yazi: installed"
+  else
+    warn "yazi could not be installed - Thunar is your file manager (other ways: yazi-rs.github.io/docs/installation)"
+    return 0
+  fi
+  [ "$do_packages" -eq 1 ] && install_yazi_extras
+  return 0
+}
+
 # sed_file SED-ARGUMENTS... FILE: edit a file in place with any sed (GNU sed -i and BSD sed -i '' differ)
 sed_file() {
   local f="${*: -1}" t rc
@@ -565,12 +683,67 @@ choose_terminal() {
   sed_file "s/^\( *terminal: \).*/\1\"$t\";/" "$cfg/i3/rofi/00-terminal.rasi" 2>/dev/null || true
 }
 
+# yazi as the file manager when it is installed, otherwise Thunar (Settings > Keybindings changes it)
+choose_file_manager() {
+  [ "$dry" -eq 1 ] && { say "file manager: yazi if it is installed, otherwise Thunar"; return 0; }
+  if have_yazi; then say "default file manager: yazi (opens in the terminal)"; return 0; fi
+  command -v thunar >/dev/null 2>&1 || return 0
+  say "default file manager: Thunar (yazi is not installed)"
+  sed_file 's/^files=.*/files="thunar"/' "$cfg/i3/defaults.conf" 2>/dev/null || true
+}
+
+# Folders opened from other programs (xdg-open, a browser's "Show in folder"...) go to the same file manager
+# (yazi by default), through a small launcher entry. It becomes the default for folders on a first install, or
+# when you had not picked one yourself; uninstall puts back what was set before.
+FOLDERS_DESKTOP=i3wm-dots-folders.desktop
+mime_default() {   # mime_default TYPE: the program ~/.config/mimeapps.list sets for it (nothing: none set there)
+  awk -v t="$1" '/^\[/ { s = ($0 == "[Default Applications]") }
+                 s && index($0, t "=") == 1 { print substr($0, length(t) + 2); exit }' "$cfg/mimeapps.list" 2>/dev/null
+}
+set_mime_default() {   # set_mime_default TYPE DESKTOP-ID  (in [Default Applications] of ~/.config/mimeapps.list)
+  local f="$cfg/mimeapps.list" real tmp src=/dev/null
+  real="$(readlink -f -- "$f" 2>/dev/null)"; [ -n "$real" ] || real="$f"     # (a linked file stays a link)
+  tmp="$real.i3tmp"; CLEANUP+=("$tmp")
+  if [ -f "$real" ]; then cp -p -- "$real" "$tmp" || return 1; src="$real"; fi
+  awk -v t="$1" -v d="$2" '
+    /^\[/ { if (s && !done) { print t "=" d ";"; done = 1 }
+            s = ($0 == "[Default Applications]"); if (s) seen = 1 }
+    s && index($0, t "=") == 1 { if (!done) { print t "=" d ";"; done = 1 } next }
+    { print }
+    END { if (!done) { if (!seen) { if (NR) print ""; print "[Default Applications]" } print t "=" d ";" } }' "$src" >"$tmp" \
+    && mv -f -- "$tmp" "$real"
+}
+install_folder_handler() {
+  local apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications" launcher="$cfg/i3/scripts/LaunchFileManager.sh" cur exec
+  case "$launcher" in
+    *[\"\`\$\\%]*|*$'\n'*) warn "folders from other programs keep opening as before (your home folder's name has characters a launcher entry cannot hold)"; return 0 ;;
+  esac
+  [ -f "$apps/$FOLDERS_DESKTOP" ] || record path "$apps/$FOLDERS_DESKTOP"
+  # quoted only when it has to be (a space in the path): xdg-open before 1.2 cannot run a quoted program path
+  exec="$launcher"; case "$launcher" in *[!A-Za-z0-9/._+-]*) exec="\"$launcher\"" ;; esac
+  cur="$(mime_default inode/directory)"
+  if [ "$dry" -eq 1 ]; then
+    say "folders from other programs open in your file manager ($apps/$FOLDERS_DESKTOP)"; return 0
+  fi
+  mkdir -p "$apps" && printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Folders (i3wm-dots)' \
+    'Comment=Opens folders in the file manager chosen in the i3 Settings window (yazi by default)' \
+    "Exec=$exec --open %u" 'Icon=system-file-manager' 'Terminal=false' 'NoDisplay=true' \
+    'MimeType=inode/directory;' >"$apps/$FOLDERS_DESKTOP" || return 0
+  case "$cur" in "$FOLDERS_DESKTOP"*) return 0 ;; esac
+  if [ "$first_install" -eq 1 ] || [ -z "$cur" ]; then
+    say "folders opened from other programs now go to your file manager too (before: ${cur:-the system default})"
+    record mime "inode/directory ${cur:--}"
+    set_mime_default inode/directory "$FOLDERS_DESKTOP" || warn "could not set the default for folders in $cfg/mimeapps.list"
+  fi
+}
+
 install_packages() {
   if [ "$FAMILY" = unknown ]; then
     warn "Unsupported distro (automated: Fedora, Arch and Debian/Ubuntu families, FreeBSD / GhostBSD, OpenBSD, NetBSD)."
     warn "Install yourself:  i3 (>=4.22) xorg polybar picom dunst rofi kitty feh maim xdotool xclip xss-lock i3lock"
     warn "  imagemagick brightnessctl pamixer playerctl pavucontrol nm-applet redshift clipmenu|copyq numlockx xinput"
     warn "  xrandr xprop xdpyinfo setxkbmap libnotify mpv qalc jq curl arandr thunar polkit-gnome|mate-polkit lxappearance fastfetch bluez blueman pactl touchegg"
+    warn "  yazi file (the file manager: yazi-rs.github.io/docs/installation)"
     warn "then re-run with --no-packages"
     return 0
   fi
@@ -700,6 +873,7 @@ install_font() {
 
 if [ "$do_packages" -eq 1 ]; then install_packages; install_font; fi
 [ "$update_mode" -eq 1 ] || ensure_terminals
+[ "$update_mode" -eq 1 ] || ensure_file_manager
 install_pokemon
 
 # ---- copy configs ---------------------------------------------------------------
@@ -792,6 +966,7 @@ done
 # the default terminal first (ghostty if installed, else kitty): the saved settings below come after it, so a
 # terminal you picked in Settings > Apps is never reset by a re-install or an update
 choose_terminal
+choose_file_manager
 
 if [ "$dry" -eq 0 ]; then
   find "$cfg/i3/scripts" -type f \( -name '*.sh' -o -name '*.py' \) -exec chmod +x {} + 2>/dev/null || true
@@ -811,6 +986,7 @@ install_shell_hook
 install_fish_hook
 install_aquarium_alias
 install_prompt
+install_folder_handler
 
 # ---- the BSDs: how i3 starts ------------------------------------------------------
 # startx reads ~/.xinitrc; OpenBSD's xenodm and NetBSD's xdm read ~/.xsession. i3 is started inside a D-Bus session

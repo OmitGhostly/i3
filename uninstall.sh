@@ -129,17 +129,21 @@ fi
 #  2. the config
 # =============================================================================
 remove_rc_lines() {   # take the installer's lines (marker + the line after it) out of ~/.bashrc and ~/.zshrc
-  local rc
+  local rc real
   for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
     [ -f "$rc" ] || continue
     grep -qE '^# i3wm-dots: (pokemon fastfetch|see-through asciiquarium|black / grey / white prompt)' "$rc" || continue
     if [ "$dry" -eq 1 ]; then echo "   + remove the i3wm-dots lines from $rc"; continue; fi
+    # (written into the real file through a copy that keeps its permissions: a ~/.zshrc linked from a dotfiles
+    #  folder stays a link)
+    real="$(readlink -f -- "$rc" 2>/dev/null)"; [ -n "$real" ] || real="$rc"
+    cp -p -- "$real" "$real.i3tmp" || continue
     awk 'skip { skip = 0; next }
          /^# i3wm-dots: (pokemon fastfetch|see-through asciiquarium|black \/ grey \/ white prompt)/ { skip = 1; if (blank) blank = 0; next }
          { if (blank) print ""; blank = 0 }
          /^$/ { blank = 1; next }
          { print }
-         END { if (blank) print "" }' "$rc" >"$rc.i3tmp" && mv -f "$rc.i3tmp" "$rc"
+         END { if (blank) print "" }' "$real" >"$real.i3tmp" && mv -f -- "$real.i3tmp" "$real"
     gone "the greeting, prompt and asciiquarium lines in ~/${rc##*/}"
     # a file the installer created that now holds nothing of yours
     if grep -qxF "rc $rc" "$manifest" 2>/dev/null && ! grep -qvE '^[[:space:]]*$|^# ~/\.(bash|zsh)rc - created by the i3wm-dots installer$' "$rc"; then
@@ -156,6 +160,34 @@ remove_block() {   # remove_block FILE START-LINE END-LINE: the block Settings w
     "$f" >"$f.i3tmp" && mv -f "$f.i3tmp" "$f"
   grep -q '[^[:space:]]' "$f" || rm -f "$f"           # nothing else was in it
   gone "the Settings block (${2#* >>> i3wm-dots }) in ~/${f##*/}"
+}
+
+# the default program for folders the installer set (~/.config/mimeapps.list): back to what it was before - only
+# while it is still the installer's (a default you picked since then stays)
+restore_mime_defaults() {
+  local f="$cfg/mimeapps.list" real kind type prev seen=" " cur changed=0
+  [ -f "$manifest" ] && [ -f "$f" ] || return 0
+  real="$(readlink -f -- "$f" 2>/dev/null)"; [ -n "$real" ] || real="$f"
+  while read -r kind type prev; do
+    [ "$kind" = mime ] && [ -n "$type" ] || continue
+    case "$seen" in *" $type "*) continue ;; esac           # (the first record is what was there originally)
+    seen="$seen$type "
+    cur="$(awk -v t="$type" '/^\[/ { s = ($0 == "[Default Applications]") }
+                            s && index($0, t "=") == 1 { print substr($0, length(t) + 2); exit }' "$real")"
+    case "$cur" in i3wm-dots-folders.desktop*) ;; *) continue ;; esac
+    [ "$prev" = - ] && prev=""
+    if [ "$dry" -eq 1 ]; then echo "   + $type in ~/.config/mimeapps.list: ${prev:-(the system default)}"; continue; fi
+    cp -p -- "$real" "$real.i3tmp" || continue
+    awk -v t="$type" -v p="$prev" '/^\[/ { s = ($0 == "[Default Applications]") }
+         s && index($0, t "=") == 1 { if (p != "") print t "=" p; next } { print }' "$real" >"$real.i3tmp" \
+      && mv -f -- "$real.i3tmp" "$real" && changed=1
+    gone "the default for folders (${prev:-the system default} again)"
+  done <"$manifest"
+  # it held nothing but our line: the file goes (the installer made it)
+  if [ "$changed" -eq 1 ] && ! grep -qvE '^[[:space:]]*$|^\[Default Applications\]$' "$real" 2>/dev/null; then
+    [ -L "$f" ] || rm -f "$f"
+  fi
+  return 0
 }
 
 remove_ini_key_if() {   # remove_ini_key_if FILE KEY VALUE: only when it still has the value the installer set
@@ -278,6 +310,7 @@ config_step() {
   f="$cfg/environment.d/90-i3dots-proxy.conf"
   [ -f "$f" ] && { run rm -f "$f"; gone "~/.config/environment.d/90-i3dots-proxy.conf"; }
 
+  restore_mime_defaults
   # files the installer recorded (wallpapers and the font it copied, a kitty from kitty's own installer...)
   local kind path
   if [ -f "$manifest" ]; then
@@ -307,7 +340,7 @@ config_step() {
   done
 
   # folders that are left empty now (rmdir only ever removes an empty one)
-  for d in "$HOME/Pictures/wallpapers" "$HOME/Pictures/Screenshots" "$HOME/.icons" "$data/icons" "$cfg/gtk-4.0" \
+  for d in "$HOME/Pictures/wallpapers" "$HOME/Pictures/Screenshots" "$HOME/.icons" "$data/icons" "$data/applications" "$cfg/gtk-4.0" \
            "$cfg/environment.d" "$cfg/xsettingsd" "$cfg/systemd/user" "$cfg/systemd"; do
     [ -d "$d" ] && run rmdir "$d" 2>/dev/null
   done
@@ -504,18 +537,24 @@ programs_step() {
     for p in "${needed[@]}"; do kept+=("$p (other software needs it)"); done
   fi
   [ "${#removable[@]}" -gt 0 ] || return 0
-  # the Ghostty source the installer added
-  if [ -f "$manifest" ] && ! command -v ghostty >/dev/null 2>&1; then
+  # the package sources the installer added (Fedora COPRs for Ghostty and yazi): each goes once its program is gone
+  if [ -f "$manifest" ]; then
     local kind value
     while read -r kind value; do
       case "$kind" in
-        copr) run $SUDO dnf copr remove -y "$value" >/dev/null 2>&1 || run $SUDO dnf copr disable -y "$value" >/dev/null 2>&1; gone "the $value COPR" ;;
+        copr)
+          command -v "${value##*/}" >/dev/null 2>&1 && continue          # (lihaohong/yazi -> yazi still installed)
+          run $SUDO dnf copr remove -y "$value" >/dev/null 2>&1 || run $SUDO dnf copr disable -y "$value" >/dev/null 2>&1
+          gone "the $value COPR" ;;
       esac
     done <"$manifest"
   fi
-  if [ -f "$manifest" ] && grep -qx 'snap ghostty' "$manifest" && command -v snap >/dev/null 2>&1; then
-    ask "Remove the Ghostty snap too?" n && { run $SUDO snap remove ghostty && gone "the Ghostty snap"; }
-  fi
+  local s
+  for s in ghostty yazi; do
+    if [ -f "$manifest" ] && grep -qx "snap $s" "$manifest" && command -v snap >/dev/null 2>&1; then
+      ask "Remove the $s snap too?" n && { run $SUDO snap remove "$s" && gone "the $s snap"; }
+    fi
+  done
 }
 
 if [ "$mode" != config ]; then

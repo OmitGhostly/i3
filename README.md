@@ -20,6 +20,8 @@ or in one line:
 bash <(curl -fsSL https://raw.githubusercontent.com/OmitGhostly/i3/main/install.sh)
 ```
 
+The file manager is [yazi](https://yazi-rs.github.io), opened in the terminal; folders opened from other programs go there too. On Fedora it comes from the [lihaohong/yazi](https://copr.fedorainfracloud.org/coprs/lihaohong/yazi/) COPR, on Debian/Ubuntu from the Snap Store (or yazi's own release build), elsewhere from your repos. Thunar stays installed, and Settings > Keybindings switches between them.
+
 ## Install on BSD
 
 FreeBSD, GhostBSD, OpenBSD, NetBSD. First install bash and git:
@@ -66,7 +68,7 @@ NetBSD has no polybar package, so it uses i3's own bar. On a BSD the Settings wi
 |---|---|
 | `SUPER + D` | App launcher (rofi) |
 | `SUPER + Enter` | Open terminal |
-| `SUPER + E` | File manager |
+| `SUPER + E` | File manager (yazi, in the terminal) |
 | `SUPER + B` | Open default browser |
 | `SUPER + C` | SSH session manager |
 | `SUPER + H` | Help / cheat sheet |
@@ -231,6 +233,7 @@ NetBSD has no polybar package, so it uses i3's own bar. On a BSD the Settings wi
 | `config/dunst/` | `~/.config/dunst/` | notifications |
 | `config/ghostty/` | `~/.config/ghostty/` | terminal |
 | `config/kitty/` | `~/.config/kitty/` | terminal |
+| `config/yazi/` | `~/.config/yazi/` | file manager colours |
 | `config/fastfetch/` | `~/.config/fastfetch/` | greeting |
 | `config/cava/` | `~/.config/cava/` | visualiser |
 | `config/touchegg/` | `~/.config/touchegg/` | gestures |
