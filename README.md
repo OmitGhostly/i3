@@ -6,7 +6,9 @@ Monochrome i3 desktop, with a Settings window (`SUPER + ALT + M`) for network (W
 
 ## Install on Linux
 
-Fedora, Arch, Debian/Ubuntu.
+Fedora (Workstation with GNOME, and KDE Plasma; up to Fedora 45), Arch, Debian/Ubuntu.
+
+Afterwards, log out and pick **i3** at the login screen. On GNOME: click your name, then the gear icon at the bottom right. On KDE: the "Desktop Session" menu under the password box. GNOME and KDE themselves run on Wayland only now, but their login screens still start X11 sessions like i3.
 
 ```bash
 git clone https://github.com/OmitGhostly/i3.git

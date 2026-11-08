@@ -1177,9 +1177,11 @@ fi
 
 case "${XDG_CURRENT_DESKTOP:-}" in
   *GNOME*) how='GNOME: log out, click your name, then the gear icon (bottom-right) and choose "i3".' ;;
-  *KDE*)   how='KDE: log out, then use the session menu at the login screen (bottom-left) and choose "i3".' ;;
+  *KDE*)   how='KDE: log out, then choose "i3" in the "Desktop Session" menu under the password box (older KDE login screens: the session menu at the bottom-left).' ;;
   *)       how='Log out and choose the "i3" session at your login screen (or put "exec i3" in ~/.xinitrc).' ;;
 esac
+[ "$BSD" -eq 1 ] || how="$how
+       If i3 is not in the list, restart the computer once (the login screen looks for X11 when it starts)."
 case "$FAMILY" in
   freebsd) how="Log out and pick \"i3\" at the login screen (GhostBSD: the session menu), or type startx on a console." ;;
   openbsd) how="Log out: xenodm starts i3 through ~/.xsession (or type startx on a console)." ;;
@@ -1211,11 +1213,26 @@ group (FreeBSD, NetBSD) or add a doas rule, e.g.  permit nopass :wheel cmd shutd
 tabs of the settings window and the touchpad swipes use Linux-only tools; the bar's items and the keys work without.
 MSG
 fi
-if [ "$FAMILY" = fedora ] && [ "${XDG_SESSION_TYPE:-}" = wayland ]; then
-  cat <<'MSG'
+# The login screen has to offer X11 sessions for i3. GNOME's GDM still does (Fedora 43-45, Ubuntu: GNOME itself is
+# Wayland-only now, other desktops' X11 sessions are not), and so do KDE's Plasma Login Manager (Fedora 44+), SDDM
+# and LightDM - unless X11 was switched off in GDM's settings, which hides i3 from the list.
+if [ "$BSD" -eq 0 ]; then
+  sysroot="${I3DOTS_TEST_ROOT:-}"
+  dm="$(readlink "$sysroot/etc/systemd/system/display-manager.service" 2>/dev/null)"; dm="${dm##*/}"; dm="${dm%.service}"
+  case "$dm" in
+    gdm|gdm3)
+      for f in "$sysroot/etc/gdm/custom.conf" "$sysroot/etc/gdm3/custom.conf" "$sysroot/etc/gdm3/daemon.conf"; do
+        [ -r "$f" ] || continue
+        if awk '/^[ \t]*\[/ { d = ($0 ~ /^[ \t]*\[daemon\][ \t]*$/) }
+                d && /^[ \t]*XorgEnable[ \t]*=[ \t]*(false|0)[ \t]*$/ { off = 1 }
+                END { exit !off }' "$f"; then
+          cat <<MSG
 
-Fedora note: recent Fedora releases moved GNOME to Wayland-only. If "i3" does not appear at the login
-screen, your display manager may not offer X11 sessions. Switch to SDDM (or LightDM), which does:
-    sudo dnf install sddm && sudo systemctl disable gdm && sudo systemctl enable sddm
+Login screen: GDM is set to hide X11 sessions (XorgEnable=false in ${f#"$sysroot"}), so "i3" will not be listed.
+Allow them again, then restart the computer:
+    sudo sed -i 's/^[ \t]*XorgEnable[ \t]*=.*/XorgEnable=true/' ${f#"$sysroot"}
 MSG
+        fi
+      done ;;
+  esac
 fi
