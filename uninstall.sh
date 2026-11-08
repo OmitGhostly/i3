@@ -18,7 +18,7 @@
 #    config     ~/.config/{i3,polybar,picom,dunst,kitty,ghostty,fastfetch,cava,touchegg,swappy} (the copies the
 #               installer made - your originals come back from *.bak-*), the dark style it merged into
 #               ~/.config/gtk-3.0 (your theme and bookmarks stay), the greeting / prompt / asciiquarium lines in
-#               ~/.bashrc and ~/.zshrc, the cursor files the Settings window wrote, the automatic updates (and the
+#               ~/.bashrc and ~/.zshrc, the cursor files the Settings window wrote, the update checks (and the
 #               pacman / dnf / apt hook), pokescript, saved state and caches, and the wallpapers and font it copied
 #    programs   i3 itself, and the packages the installer installed (it keeps a list since this version; for an older
 #               install use --all-programs). A package that something else still needs is kept.
@@ -202,7 +202,7 @@ remove_ini_key_if() {   # remove_ini_key_if FILE KEY VALUE: only when it still h
 
 config_step() {
   local d name latest rest
-  # automatic updates and the system hook first (they would otherwise reinstall the config)
+  # the update checks and the system hook first
   if [ -x "$cfg/i3/scripts/Update.sh" ] && grep -qxF "$(id -un)" "${I3DOTS_TEST_ROOT:-}/etc/i3wm-dots/users" 2>/dev/null; then
     say "removing the system update hook (asks for your password)"
     if [ "$dry" -eq 1 ]; then echo "   + i3dots-update --remove-hook"
@@ -222,7 +222,7 @@ config_step() {
     command -v systemctl >/dev/null 2>&1 && [ "$dry" -eq 0 ] && systemctl --user stop i3dots-update.service >/dev/null 2>&1
     run rm -f "$cfg/systemd/user/i3dots-update.service"
     command -v systemctl >/dev/null 2>&1 && [ "$dry" -eq 0 ] && systemctl --user daemon-reload >/dev/null 2>&1
-    gone "the automatic updates (i3dots-update)"
+    gone "the update checks (i3dots-update)"
   fi
 
   # the config folders the installer made; your originals come back from the newest *.bak-*.

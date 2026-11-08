@@ -1,6 +1,9 @@
 # pkill -SIGUSR2 ghostty
+# YOUR OWN SETTINGS: put them in ~/.config/ghostty-local.conf, not here. Updates (i3dots-update) replace this whole
+# folder, but never touch that file. It is read after this one, so what you set there wins - over the Settings
+# window too (a theme set there stays, whatever the Themes tab says).
+config-file = ?../ghostty-local.conf
 theme = "mono"
-#config-file = ~/.config/ghostty/extra.conf
 #theme = Aura
 #theme = Aardvark Blue
 #theme = GruvboxDarkHard

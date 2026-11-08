@@ -2,18 +2,21 @@
 # Keep the desktop config (i3, bar, Settings window...) up to date with the GitHub repo.
 #
 # After a system update (sudo pacman -Syu on Arch, sudo dnf upgrade on Fedora, apt upgrade on Debian/Ubuntu) a
-# small system hook asks your session to run this. FreeBSD / GhostBSD, OpenBSD and NetBSD have no such hooks: there a
-# line in your crontab checks every 30 minutes whether packages were installed or updated (pkg, pkg_add, pkgin). It fetches the newest version of the repo into a private copy
-# (~/.local/share/i3wm-dots-updater/repo) and, only when something changed, re-installs the config files the quick
-# way (install.sh --update: no packages, no password). What you set in the Settings window (colours, bar style,
-# keybindings, mouse, monitors...) is kept; files you edited by hand in ~/.config/i3, polybar, ... are replaced -
-# the version before the update is kept, and "i3dots-update --undo" puts it back.
-# If you were not logged in during the system update, it runs at your next login instead.
+# small system hook asks your session to CHECK for a newer version. FreeBSD / GhostBSD, OpenBSD and NetBSD have no
+# such hooks: there a line in your crontab checks every 30 minutes whether packages were installed or updated (pkg,
+# pkg_add, pkgin). The check fetches the newest version of the repo into a private copy
+# (~/.local/share/i3wm-dots-updater/repo) and, when there is a newer one, shows a notification - once per new
+# version. Nothing is installed until you run "i3dots-update" yourself.
+# Installing re-installs the config files the quick way (install.sh --update: no packages, no password). What you
+# set in the Settings window (colours, bar style, keybindings, mouse, monitors...) is kept; files you edited by hand
+# in ~/.config/i3, ghostty, polybar, ... are replaced - the version before the update is kept, and
+# "i3dots-update --undo" puts it back.
+# If you were not logged in during the system update, the check runs at your next login instead.
 #
-#   i3dots-update                 update now (also works when automatic updates are off)
+#   i3dots-update                 install the newest version now
 #   i3dots-update --check         only say whether there is a newer version
 #   i3dots-update --undo          go back to the config from before the last update
-#   i3dots-update --off / --on    turn the automatic updates off / on again
+#   i3dots-update --off / --on    turn the checks after system updates off / on again
 #   i3dots-update --status        show the settings and the last update
 #   i3dots-update --install-hook  set up the pacman / dnf / apt hook (asks for your password once); on the BSDs the
 #                                 crontab line (no password)
@@ -70,7 +73,15 @@ system_updated() {
 }
 
 say() { if [ "$quiet" -eq 1 ]; then printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$log"; else printf '%s\n' "$*"; fi; }
-note() { command -v notify-send >/dev/null 2>&1 && notify-send -a "i3wm-dots" -u low "$@" 2>/dev/null; true; }
+# note [notify-send options] TITLE TEXT: a desktop notification; fails when none could be shown (no notification
+# daemon, or cron on the BSDs without the session's D-Bus address - the login run saves it in $state/session)
+note() {
+  command -v notify-send >/dev/null 2>&1 || return 1
+  if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -r "$state/session" ]; then
+    DBUS_SESSION_BUS_ADDRESS="$(head -n1 "$state/session")"; export DBUS_SESSION_BUS_ADDRESS
+  fi
+  notify-send -a "i3wm-dots" "$@" 2>/dev/null
+}
 
 if [ "$(id -u)" -eq 0 ] && [ -z "$root" ]; then
   echo "run this as your normal user, not root" >&2
@@ -260,6 +271,7 @@ update() {
   if [ -n "$new" ] && [ "$new" = "$old" ]; then
     say "already up to date (${new:0:7})"
     date +%s >"$state/last-run"
+    rm -f "$state/available"
     return 0
   fi
   git -C "$repo" reset -q --hard "$new" || { say "could not use the downloaded version"; return 1; }
@@ -275,6 +287,7 @@ update() {
   rm -rf "$state/previous" && mv "$state/previous.tmp" "$state/previous"
   subject="$(git -C "$repo" log -1 --format=%s 2>/dev/null)"
   say "updating to ${new:0:7}: $subject"
+  say "(your Settings are kept; files you changed by hand in $cfg are replaced - i3dots-update --undo puts them back)"
   if ! bash "$repo/install.sh" --update >>"$log" 2>&1; then
     say "the update failed (see $log) - putting the previous version back"
     undo >/dev/null
@@ -283,10 +296,54 @@ update() {
   fi
   printf '%s\n' "$new" >"$state/applied"
   date +%s >"$state/last-run"
+  rm -f "$state/available" "$state/notified"
   reload_desktop
   say "updated to ${new:0:7}"
-  note "Desktop config updated" "${subject:-new version} (${new:0:7}). Undo: i3dots-update --undo"
+  note -u low "Desktop config updated" "${subject:-new version} (${new:0:7}). Undo: i3dots-update --undo"
   return 0
+}
+
+# ------------------------------------------------------------------ after a system update: check and tell
+# tell_available: the notification about the version in $state/available, unless it was shown already
+tell_available() {
+  local new subject
+  new="$(cat "$state/available" 2>/dev/null)"
+  [ -n "$new" ] || return 0
+  [ "$new" = "$(cat "$state/applied" 2>/dev/null)" ] && { rm -f "$state/available"; return 0; }
+  [ "$new" = "$(cat "$state/notified" 2>/dev/null)" ] && return 0
+  subject="$(git -C "$repo" log -1 --format=%s "$new" 2>/dev/null)"
+  if note -u normal -i software-update-available "Desktop config update available" \
+      "${subject:-A new version} (${new:0:7}). To install it, run:  i3dots-update
+Your Settings are kept; files you changed by hand in ~/.config are replaced (i3dots-update --undo puts them back)."; then
+    printf '%s\n' "$new" >"$state/notified"
+  else
+    say "could not show the notification (no notification service?) - it is shown at your next login"
+  fi
+}
+
+# check: is there a newer version than the one installed? Installs nothing - only says so
+check() {
+  if [ ! -f "$cfg/i3/.i3wm-dots-installed" ]; then
+    say "the i3 config in $cfg/i3 was not installed by i3wm-dots - nothing to check"
+    return 0
+  fi
+  local new
+  new="$(fetch)" || return 1
+  date +%s >"$state/last-run"
+  if [ -z "$new" ] || [ "$new" = "$(cat "$state/applied" 2>/dev/null)" ]; then
+    say "already up to date (${new:0:7})"
+    rm -f "$state/available"
+    return 0
+  fi
+  printf '%s\n' "$new" >"$state/available"
+  say "a newer version is available: ${new:0:7} $(git -C "$repo" log -1 --format=%s "$new" 2>/dev/null) (install it with: i3dots-update)"
+  tell_available
+}
+
+# (the login run: the session's D-Bus address, so the BSDs' cron check can show its notification)
+remember_session() {
+  [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] || return 0
+  printf '%s\n' "$DBUS_SESSION_BUS_ADDRESS" >"$state/session.tmp" 2>/dev/null && mv -f "$state/session.tmp" "$state/session"
 }
 
 undo() {
@@ -309,12 +366,14 @@ exec 9>"$state/lock"
 case "$mode" in
   --install-hook) install_hook; exit $? ;;
   --remove-hook)  remove_hook; exit $? ;;
-  --off)    : >"$state/off"; echo "automatic updates are off (i3dots-update still updates by hand)"; exit 0 ;;
-  --on)     rm -f "$state/off"; echo "automatic updates are on"; exit 0 ;;
+  --off)    : >"$state/off"; echo "no more checks after system updates (i3dots-update still updates by hand)"; exit 0 ;;
+  --on)     rm -f "$state/off"; echo "after a system update you get a notification when a newer version is out"; exit 0 ;;
   --status)
-    echo "automatic updates: $(auto_on && echo on || echo off)"
+    echo "checks after system updates: $(auto_on && echo "on (a notification when a newer version is out; installing is up to you)" || echo off)"
     echo "repo:              $(repo_url)"
     a="$(cat "$state/applied" 2>/dev/null)"; echo "installed version: ${a:0:7}${a:+ }$( [ -n "$a" ] && git -C "$repo" log -1 --format='(%cd) %s' --date=short "$a" 2>/dev/null)"
+    n="$(cat "$state/available" 2>/dev/null)"
+    [ -n "$n" ] && [ "$n" != "$a" ] && echo "newer version:     ${n:0:7} $(git -C "$repo" log -1 --format='(%cd) %s' --date=short "$n" 2>/dev/null) - install it with: i3dots-update"
     # (GNU date -d @SECONDS, BSD date -r SECONDS)
     t="$(cat "$state/last-run" 2>/dev/null)"
     [ -n "$t" ] && echo "last check:        $(date -d "@$t" '+%F %H:%M' 2>/dev/null || date -r "$t" '+%F %H:%M' 2>/dev/null)"
@@ -332,25 +391,30 @@ case "$mode" in
     exit 0 ;;
   --undo)   flock -w 300 9 || exit 1; undo; exit $? ;;
   --auto)
-    auto_on || { say "automatic updates are off"; exit 0; }
+    # (the system hook, after a system update: check and tell - installing is up to you)
+    auto_on || { say "checks after system updates are off"; exit 0; }
     flock -n 9 || exit 0            # one is already running
-    update; exit $? ;;
+    check; exit $? ;;
   --login)
-    # catch up on a system update that happened while you were logged out
     auto_on || exit 0
-    system_updated || exit 0
-    sleep "${I3DOTS_LOGIN_DELAY:-20}"  # let the network come up first
+    remember_session
+    # catch up on a system update that happened while you were logged out; else a notification that could not
+    # be shown before (no notification service at the time) comes now
+    if system_updated; then todo=check
+    elif [ -s "$state/available" ] && [ "$(cat "$state/available")" != "$(cat "$state/notified" 2>/dev/null)" ]; then todo=tell_available
+    else exit 0; fi
+    sleep "${I3DOTS_LOGIN_DELAY:-20}"  # let the network and the notification service come up first
     flock -n 9 || exit 0
-    update; exit $? ;;
+    "$todo"; exit $? ;;
   --cron)
     # the BSDs: cron asks every 30 minutes; only a system update (a changed package database) leads to a check
     auto_on || exit 0
     system_updated || exit 0
     flock -n 9 || exit 0
-    update; exit $? ;;
+    check; exit $? ;;
   now|--now)
     flock -w 300 9 || { echo "another update is running"; exit 1; }
     update; exit $? ;;
-  -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "unknown option: $mode (try --help)" >&2; exit 2 ;;
 esac

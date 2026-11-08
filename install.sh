@@ -13,7 +13,7 @@
 #    --no-pokemon    skip pokescript and the shiny Mimikyu fastfetch greeting in the terminal
 #    --no-ghostty    do not install Ghostty (kitty is used as the terminal instead)
 #    --no-backup     overwrite existing configs instead of moving them aside
-#    --no-auto-update do not update the desktop config together with system updates (pacman -Syu / dnf upgrade / pkg upgrade)
+#    --no-auto-update do not check for a newer desktop config after system updates (pacman -Syu / dnf upgrade / pkg upgrade)
 #    --update        quick re-install of the config files only (used by i3dots-update: no packages, no password)
 #    --restore       put back the newest *.bak-* backups and exit
 #    --dry-run       show what would happen without changing anything
@@ -1079,8 +1079,8 @@ install_cursor
 [ "$first_install" -eq 1 ] && run rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/i3/first-run-done" \
   "${XDG_STATE_HOME:-$HOME/.local/state}/i3wm-dots/first-run-done"
 
-# ---- updates: keep the config up to date with the repo, together with system updates ---------------
-# (i3dots-update = ~/.config/i3/scripts/Update.sh; the pacman / dnf / apt hook asks it to run after a system update)
+# ---- updates: after a system update, a check for a newer config (a notification; installing is up to you) ---------
+# (i3dots-update = ~/.config/i3/scripts/Update.sh; the pacman / dnf / apt hook asks it to check after a system update)
 setup_updates() {
   local state="${XDG_DATA_HOME:-$HOME/.local/share}/i3wm-dots-updater" url="" unit="$cfg/systemd/user/i3dots-update.service"
   if [ "$dry" -eq 1 ]; then
@@ -1106,7 +1106,7 @@ setup_updates() {
   if [ "$BSD" -eq 0 ]; then
     cat >"$unit" <<'UNIT'
 [Unit]
-Description=Update the i3wm-dots desktop config from GitHub (started after a system update)
+Description=Check GitHub for a newer i3wm-dots desktop config (started after a system update)
 
 [Service]
 Type=oneshot
@@ -1124,13 +1124,13 @@ UNIT
     *) say "note: ~/.local/bin is not in your PATH - run the updater as ~/.local/bin/i3dots-update (or add that folder to PATH)" ;;
   esac
   if [ "$do_autoupdate" -eq 0 ]; then
-    say "automatic config updates are off (update by hand with: i3dots-update)"
+    say "no update checks after system updates (update by hand with: i3dots-update)"
   elif [ "$do_packages" -eq 1 ] && [ "$FAMILY" != unknown ]; then
-    if [ "$BSD" -eq 1 ]; then say "setting up config updates after system updates (cron checks every 30 minutes)"
-    else say "setting up config updates together with system updates (pacman -Syu / dnf upgrade / apt upgrade)"; fi
+    if [ "$BSD" -eq 1 ]; then say "setting up a check for a newer config after system updates (cron looks every 30 minutes)"
+    else say "setting up a check for a newer config after system updates (pacman -Syu / dnf upgrade / apt upgrade)"; fi
     bash "$cfg/i3/scripts/Update.sh" --install-hook || warn "could not set up the system update hook - run later: i3dots-update --install-hook"
   else
-    say "to update the config together with system updates, run once:  i3dots-update --install-hook"
+    say "to check for a newer config after system updates, run once:  i3dots-update --install-hook"
   fi
 }
 setup_updates
@@ -1198,8 +1198,9 @@ Done.  $how
   - Your old desktop is untouched - pick it again at the login screen any time.
   - Undo the dotfiles:  ./install.sh --restore
   - Remove it all again (the config, and if you want i3 and the programs it added):  ./uninstall.sh  or  i3dots-uninstall
-  - Updates: after a system update (pacman -Syu / dnf upgrade / pkg upgrade) the config is updated from GitHub too,
-    keeping your Settings. By hand: i3dots-update   Undo the last one: i3dots-update --undo   Turn off: i3dots-update --off
+  - Updates: after a system update (pacman -Syu / dnf upgrade / pkg upgrade) you get a notification when a newer
+    config is out on GitHub - nothing changes until you run:  i3dots-update   (keeps your Settings; files you edited
+    by hand are replaced - undo: i3dots-update --undo)   No more checks: i3dots-update --off
 MSG
 if [ "$BSD" -eq 1 ]; then
   cat <<MSG

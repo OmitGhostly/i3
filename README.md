@@ -43,6 +43,23 @@ cd i3
 
 NetBSD has no polybar package, so it uses i3's own bar. On a BSD the Settings window shows your network adapters and addresses and sets the proxy, while joining Wi-Fi, VPNs, sound and Bluetooth point to the system's own tools; there are no touchpad swipes. To shut down or sleep from the power menu, join the `operator` group (FreeBSD, NetBSD) or add a doas rule such as `permit nopass :wheel cmd shutdown`.
 
+## Updates
+
+After a system update (`pacman -Syu`, `dnf upgrade`, `apt upgrade`; on a BSD, cron looks every 30 minutes) you get a notification when a newer version of this config is on GitHub. Nothing changes until you install it:
+
+```bash
+i3dots-update
+```
+
+What you set in the Settings window is kept. Files you edited by hand in `~/.config` (the Ghostty config, the i3 config...) are replaced, and `i3dots-update --undo` puts back the version from before. Your own Ghostty settings belong in `~/.config/ghostty-local.conf`: Ghostty reads it last, and updates never touch it.
+
+| Command | Does |
+|---|---|
+| `i3dots-update --check` | only say whether there is a newer version |
+| `i3dots-update --status` | the installed version, and a newer one if there is |
+| `i3dots-update --undo` | go back to the config from before the last update |
+| `i3dots-update --off` / `--on` | no more checks after system updates / checks again |
+
 ## Uninstall
 
 ```bash
