@@ -215,7 +215,8 @@ packages_for() {
     debian) echo "i3 xsettingsd xserver-xorg x11-xserver-utils x11-utils x11-xkb-utils xinput network-manager-gnome
                   network-manager-openvpn-gnome|network-manager-openvpn thunar
                   policykit-1-gnome|polkit-gnome|mate-polkit|lxpolkit libnotify-bin qalc|libqalculate-utils
-                  fonts-noto-color-emoji python3-gi python3-gi-cairo gir1.2-gtk-3.0 mesa-utils pulseaudio-utils sound-theme-freedesktop $common" ;;
+                  fonts-noto-color-emoji python3-gi python3-gi-cairo gir1.2-gtk-3.0 mesa-utils pulseaudio-utils sound-theme-freedesktop
+                  swappy|flameshot $common" ;;
     # The BSDs: no brightnessctl / pamixer / BlueZ / NetworkManager / touchegg (Linux only) - Platform.sh uses the
     # system's own mixer, backlight and battery tools instead. Names checked against each ports tree.
     # (The Python GTK bindings follow the python3 that gets installed: see python_gtk)
@@ -487,13 +488,63 @@ install_ghostty() {
         fi
       done ;;
     debian)
-      # no apt package before Ubuntu 26.04 / on Debian: the Snap Store (listed on ghostty.org)
+      # no apt package before Ubuntu 26.04 / on Debian: the Snap Store (listed on ghostty.org), then the community
+      # .deb ghostty.org lists - the way in on Linux Mint, which has no Snap
       if command -v snap >/dev/null 2>&1; then
         say "installing Ghostty from the Snap Store (your release has no apt package)"
         run $SUDO snap install ghostty --classic && { record snap ghostty; return 0; }
-      fi ;;
+      fi
+      install_ghostty_deb && { [ "$had" -eq 1 ] || record_new_pkgs ghostty; return 0; } ;;
   esac
   return 1
+}
+
+# The community .deb that ghostty.org lists for Ubuntu and Debian (github.com/mkasberg/ghostty-ubuntu), straight from
+# its GitHub releases. It is installed with apt (so "apt remove ghostty", and the uninstaller, take it out again);
+# no repository is added. Ubuntu 24.04 and what is built on it (Linux Mint 22, Pop!_OS, Zorin...) get Ghostty 1.3.1,
+# the last version that runs there; Debian 13 / 14 and LMDE 7 the newest one.
+ghostty_deb_target() {   # the release file's ending (amd64_24.04, arm64_trixie...); nothing when there is none
+  local arch id ver uver ucode dcode vcode c
+  arch="$(dpkg --print-architecture 2>/dev/null)"
+  case "$arch" in amd64|arm64) ;; *) return 0 ;; esac
+  # shellcheck source=/dev/null
+  read -r id ver uver ucode dcode vcode <<<"$( . "${I3DOTS_OS_RELEASE:-/etc/os-release}" 2>/dev/null
+    echo "${ID:--} ${VERSION_ID:--} ${UBUNTU_VERSION_ID:--} ${UBUNTU_CODENAME:--} ${DEBIAN_CODENAME:--} ${VERSION_CODENAME:--}")"
+  case "$ucode" in
+    noble)    echo "${arch}_24.04"; return 0 ;;
+    resolute) echo "${arch}_26.04"; return 0 ;;
+    stonking) echo "${arch}_26.10"; return 0 ;;
+  esac
+  case "$id:$ver" in ubuntu:24.04|ubuntu:26.04|ubuntu:26.10) echo "${arch}_$ver"; return 0 ;; esac
+  case "$uver" in 24.04|26.04|26.10) echo "${arch}_$uver"; return 0 ;; esac
+  for c in "$dcode" "$vcode"; do
+    case "$c" in trixie|forky) echo "${arch}_$c"; return 0 ;; esac
+  done
+}
+
+install_ghostty_deb() {
+  local target tag url tmp file rc=1 gh=https://github.com/mkasberg/ghostty-ubuntu/releases
+  target="$(ghostty_deb_target)"
+  [ -n "$target" ] && command -v curl >/dev/null 2>&1 && command -v dpkg-deb >/dev/null 2>&1 || return 1
+  if [ "${target##*_}" = 24.04 ]; then
+    tag=1.3.1-0-ppa2                                 # (Ghostty 1.4 and newer need more than Ubuntu 24.04 has)
+  else
+    # the newest release: where github.com sends .../releases/latest (.../releases/tag/1.4.0-0-ppa2)
+    tag="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$gh/latest" 2>/dev/null)"; tag="${tag##*/tag/}"
+    case "$tag" in [0-9]*-*) ;; *) return 1 ;; esac
+  fi
+  # (the files are named after the tag with its last "-" as ".": tag 1.3.1-0-ppa2 -> ghostty_1.3.1-0.ppa2_amd64_24.04.deb)
+  file="ghostty_${tag%-*}.${tag##*-}_${target}.deb"; url="$gh/download/$tag/$file"
+  say "installing Ghostty from the community .deb on ghostty.org's list (github.com/mkasberg/ghostty-ubuntu, $tag)"
+  [ "$dry" -eq 1 ] && return 0
+  tmp="$(mktemp -d)"; CLEANUP+=("$tmp"); chmod 755 "$tmp"   # (apt reads it as its own user)
+  if curl -fsSL --retry 2 -o "$tmp/$file" "$url" && chmod 644 "$tmp/$file" \
+     && [ "$(dpkg-deb -f "$tmp/$file" Package 2>/dev/null)" = ghostty ] \
+     && run $SUDO apt-get install -y "$tmp/$file"; then
+    rc=0
+  fi
+  rm -rf "$tmp"
+  return $rc
 }
 
 install_kitty() {
@@ -641,6 +692,31 @@ install_yazi_extras() {
     for p in "${new[@]}"; do pkg_install "$p" >/dev/null 2>&1 || echo "   (could not install $p - yazi works without it)"; done
   fi
   record_new_pkgs "${new[@]}"
+}
+
+# fastfetch (the terminal greeting) is not packaged before Ubuntu 24.10 / Debian 13 - Ubuntu 24.04, Linux Mint 22:
+# its official .deb from github.com/fastfetch-cli/fastfetch then, installed with apt (so the uninstaller removes it)
+install_fastfetch_deb() {
+  local arch tmp rc=1 had=0
+  [ "$FAMILY" = debian ] && ! command -v fastfetch >/dev/null 2>&1 || return 0
+  case "$(dpkg --print-architecture 2>/dev/null)" in
+    amd64) arch=amd64 ;; arm64) arch=aarch64 ;; *) return 0 ;;
+  esac
+  command -v curl >/dev/null 2>&1 && command -v dpkg-deb >/dev/null 2>&1 || return 0
+  pkg_installed fastfetch && had=1
+  say "installing fastfetch from its official .deb (github.com/fastfetch-cli/fastfetch - your release has no package)"
+  [ "$dry" -eq 1 ] && return 0
+  tmp="$(mktemp -d)"; CLEANUP+=("$tmp"); chmod 755 "$tmp"
+  if curl -fsSL --retry 2 -o "$tmp/fastfetch.deb" \
+          "https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-$arch.deb" \
+     && chmod 644 "$tmp/fastfetch.deb" && [ "$(dpkg-deb -f "$tmp/fastfetch.deb" Package 2>/dev/null)" = fastfetch ] \
+     && run $SUDO apt-get install -y "$tmp/fastfetch.deb"; then
+    rc=0; [ "$had" -eq 1 ] || record_new_pkgs fastfetch
+  else
+    warn "fastfetch could not be installed - the terminal greeting stays off until you install it"
+  fi
+  rm -rf "$tmp"
+  return $rc
 }
 
 ensure_file_manager() {
@@ -871,7 +947,7 @@ install_font() {
   fi
 }
 
-if [ "$do_packages" -eq 1 ]; then install_packages; install_font; fi
+if [ "$do_packages" -eq 1 ]; then install_packages; install_fastfetch_deb || true; install_font; fi
 [ "$update_mode" -eq 1 ] || ensure_terminals
 [ "$update_mode" -eq 1 ] || ensure_file_manager
 install_pokemon
@@ -1175,10 +1251,13 @@ if [ "${#missing[@]}" -gt 0 ]; then
   warn "install them manually, or the matching keybinds/modules will do nothing (log: ~/.cache/i3wm-dots-install.log)"
 fi
 
-case "${XDG_CURRENT_DESKTOP:-}" in
-  *GNOME*) how='GNOME: log out, click your name, then the gear icon (bottom-right) and choose "i3".' ;;
-  *KDE*)   how='KDE: log out, then choose "i3" in the "Desktop Session" menu under the password box (older KDE login screens: the session menu at the bottom-left).' ;;
-  *)       how='Log out and choose the "i3" session at your login screen (or put "exec i3" in ~/.xinitrc).' ;;
+# shellcheck source=/dev/null
+os_id="$( . "${I3DOTS_OS_RELEASE:-/etc/os-release}" 2>/dev/null; echo "${ID:-}" )"
+case "$os_id:${XDG_CURRENT_DESKTOP:-}" in
+  linuxmint:*) how='Linux Mint: log out, then on the login screen click the small round icon next to your name and choose "i3".' ;;
+  *:*GNOME*) how='GNOME: log out, click your name, then the gear icon (bottom-right) and choose "i3".' ;;
+  *:*KDE*)   how='KDE: log out, then choose "i3" in the "Desktop Session" menu under the password box (older KDE login screens: the session menu at the bottom-left).' ;;
+  *)         how='Log out and choose the "i3" session at your login screen (or put "exec i3" in ~/.xinitrc).' ;;
 esac
 [ "$BSD" -eq 1 ] || how="$how
        If i3 is not in the list, restart the computer once (the login screen looks for X11 when it starts)."

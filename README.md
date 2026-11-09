@@ -6,9 +6,11 @@ Monochrome i3 desktop, with a Settings window (`SUPER + ALT + M`) for network (W
 
 ## Install on Linux
 
-Fedora (Workstation with GNOME, and KDE Plasma; up to Fedora 45), Arch, Debian/Ubuntu.
+Fedora (Workstation with GNOME, and KDE Plasma; up to Fedora 45), Arch, Debian/Ubuntu, Linux Mint.
 
-Afterwards, log out and pick **i3** at the login screen. On GNOME: click your name, then the gear icon at the bottom right. On KDE: the "Desktop Session" menu under the password box. GNOME and KDE themselves run on Wayland only now, but their login screens still start X11 sessions like i3.
+Afterwards, log out and pick **i3** at the login screen. On GNOME: click your name, then the gear icon at the bottom right. On KDE: the "Desktop Session" menu under the password box. On Linux Mint: the small round icon next to your name. GNOME and KDE themselves run on Wayland only now, but their login screens still start X11 sessions like i3.
+
+On Ubuntu 24.04 and Linux Mint 22, which don't package Ghostty or fastfetch, the installer gets them as `.deb` files: Ghostty 1.3.1 (the last version for Ubuntu 24.04) from [ghostty-ubuntu](https://github.com/mkasberg/ghostty-ubuntu), the community package listed on ghostty.org, and fastfetch from its own releases. Both are installed with apt, so the uninstaller removes them again.
 
 ```bash
 git clone https://github.com/OmitGhostly/i3.git
