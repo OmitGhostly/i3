@@ -2,7 +2,7 @@
 
 Monochrome i3 desktop, with a Settings window (`SUPER + ALT + M`) for network (Wi-Fi, Ethernet, IP and DNS, VPN, proxy), Bluetooth, sound, displays and brightness, the look and the keys. The cursor is [Capitaine Cursors](assets/cursors).
 
-![desktop](docs/preview.png)
+![desktop](docs/desktop.png)
 
 ## Install on Linux
 
