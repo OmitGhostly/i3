@@ -59,11 +59,11 @@ data="${XDG_DATA_HOME:-$HOME/.local/share}"
 state="${XDG_STATE_HOME:-$HOME/.local/state}/i3wm-dots"
 cache="${XDG_CACHE_HOME:-$HOME/.cache}"
 manifest="$state/installed"
-# programs are removed as root: through sudo, else doas (the BSDs), else su (asks for root's password)
+# programs are removed as root: through sudo, else doas (with a rule in /etc/doas.conf), else su (asks for root's password)
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then "$@"
   elif command -v sudo >/dev/null 2>&1; then sudo "$@"
-  elif command -v doas >/dev/null 2>&1 && { [ -f /etc/doas.conf ] || [ -f /usr/local/etc/doas.conf ] || [ -f /usr/pkg/etc/doas.conf ]; }; then doas "$@"
+  elif command -v doas >/dev/null 2>&1 && [ -f /etc/doas.conf ]; then doas "$@"
   else su root -c "$(printf '%q ' "$@")"; fi
 }
 SUDO=as_root; [ "$(id -u)" -eq 0 ] && SUDO=""
@@ -80,13 +80,16 @@ ask() {   # ask "question" default(y|n) -> 0 for yes
   case "${a:-$def}" in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
+# FreeBSD, GhostBSD, OpenBSD and NetBSD have their own version (github.com/OmitGhostly/i3-bsd), with its own uninstaller
+case "${I3DOTS_OS:-$(uname -s)}" in
+  FreeBSD|OpenBSD|NetBSD|DragonFly)
+    printf '\033[1;31mxx\033[0m %s\n' "This is the Linux version. On $(uname -s) use the uninstaller the install left you (i3dots-uninstall)," \
+      "   or the one in https://github.com/OmitGhostly/i3-bsd" >&2
+    exit 1 ;;
+esac
+
 detect_family() {
   local f="${I3DOTS_OS_RELEASE:-/etc/os-release}" id="" like=""
-  case "${I3DOTS_OS:-$(uname -s)}" in
-    FreeBSD) echo freebsd; return ;;
-    OpenBSD) echo openbsd; return ;;
-    NetBSD)  echo netbsd; return ;;
-  esac
   if [ -r "$f" ]; then
     # shellcheck source=/dev/null
     id="$( . "$f"; echo "${ID:-}" )"
@@ -194,7 +197,7 @@ remove_ini_key_if() {   # remove_ini_key_if FILE KEY VALUE: only when it still h
   local f="$1"
   [ -f "$f" ] || return 0
   grep -qE "^[[:space:]]*$2[[:space:]]*=[[:space:]]*$3[[:space:]]*\$" "$f" || return 0
-  # (written through a temporary file: GNU sed -i and BSD sed -i differ)
+  # (written through a temporary file: the file itself stays - its permissions, a link to it)
   [ "$dry" -eq 1 ] && { printf '   + remove "%s=%s" from %s\n' "$2" "$3" "$f"; return 0; }
   sed -E "/^[[:space:]]*$2[[:space:]]*=[[:space:]]*$3[[:space:]]*\$/d" "$f" >"$f.i3tmp" && cat "$f.i3tmp" >"$f"
   rm -f "$f.i3tmp"
@@ -208,15 +211,6 @@ config_step() {
     if [ "$dry" -eq 1 ]; then echo "   + i3dots-update --remove-hook"
     elif bash "$cfg/i3/scripts/Update.sh" --remove-hook; then gone "the pacman / dnf / apt hook"
     else warn "could not remove the system hook - run later:  sudo rm /etc/pacman.d/hooks/i3wm-dots.hook /etc/dnf/libdnf5-plugins/actions.d/i3wm-dots.actions"; fi
-  fi
-  # the BSDs: the crontab line that checks for system updates
-  if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF '# i3wm-dots: update the desktop config'; then
-    if [ "$dry" -eq 1 ]; then echo "   + remove the i3wm-dots line from your crontab"
-    else
-      rest="$(crontab -l 2>/dev/null | grep -vF '# i3wm-dots: update the desktop config')"
-      if [ -n "$rest" ]; then printf '%s\n' "$rest" | crontab -; else crontab -r 2>/dev/null || printf '' | crontab -; fi
-    fi
-    gone "the crontab line for updates after system updates"
   fi
   if [ -f "$cfg/systemd/user/i3dots-update.service" ]; then
     command -v systemctl >/dev/null 2>&1 && [ "$dry" -eq 0 ] && systemctl --user stop i3dots-update.service >/dev/null 2>&1
@@ -359,31 +353,22 @@ PROTECTED=" git curl unzip python3 python python3-gobject python3-cairo python-g
  xorg-xsetroot xorg-xrandr xorg-xprop xorg-xdpyinfo xorg-setxkbmap xorg-xinput sound-theme-freedesktop libnotify
  libnotify-bin google-noto-color-emoji-fonts google-noto-emoji-color-fonts noto-fonts-emoji fonts-noto-color-emoji
  adwaita-cursor-theme adwaita-icon-theme libpulse pulseaudio-utils network-manager-applet network-manager-gnome
- mesa-utils glx-utils sudo systemd
- xorg gtk+3 gtk3+ dbus bash pkg_alternatives noto-emoji noto-emoji-ttf freedesktop-sound-theme mesa-demos xbacklight
- networkmgr polkit-gnome mate-polkit doas "
+ mesa-utils glx-utils sudo systemd dbus bash polkit-gnome mate-polkit doas "
 PROTECTED=" ${PROTECTED//$'\n'/ } "           # (one line, so every name has a space on both sides)
 
-i3_pkgs() { case "$FAMILY" in fedora|freebsd|openbsd|netbsd) echo i3 ;; arch) echo i3-wm ;; debian) echo "i3 i3-wm" ;; esac; }
+i3_pkgs() { case "$FAMILY" in fedora) echo i3 ;; arch) echo i3-wm ;; debian) echo "i3 i3-wm" ;; esac; }
 installed() {
   case "$FAMILY" in
     fedora) rpm -q "$1" >/dev/null 2>&1 ;;
     arch)   pacman -Qq "$1" >/dev/null 2>&1 ;;
     debian) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'ok installed' ;;
-    freebsd) pkg info -e "$1" 2>/dev/null ;;
-    openbsd) pkg_info -q -e "${1%%%*}-*" >/dev/null 2>&1 ;;
-    netbsd)  pkg_info -q -e "$1" >/dev/null 2>&1 ;;
     *)      return 1 ;;
   esac
 }
 other_desktops() {   # the login sessions that are not i3
-  local f n=0 w
-  # (OpenBSD and NetBSD come with window managers of their own - fvwm, cwm, ctwm, twm - to log in to)
-  if [ -z "${I3DOTS_TEST_ROOT:-}" ]; then
-    for w in fvwm cwm ctwm twm; do command -v "$w" >/dev/null 2>&1 && n=$((n + 1)); done
-  fi
+  local f n=0
   for f in "${I3DOTS_TEST_ROOT:-}"/usr/share/xsessions/*.desktop "${I3DOTS_TEST_ROOT:-}"/usr/share/wayland-sessions/*.desktop \
-           "${I3DOTS_TEST_ROOT:-}"/usr/local/share/xsessions/*.desktop "${I3DOTS_TEST_ROOT:-}"/usr/pkg/share/xsessions/*.desktop; do
+           "${I3DOTS_TEST_ROOT:-}"/usr/local/share/xsessions/*.desktop; do
     [ -e "$f" ] || continue
     case "${f##*/}" in i3.desktop|i3-with-shmlog.desktop|i3wm.desktop) continue ;; esac
     n=$((n + 1))
@@ -397,8 +382,8 @@ add_candidate() {
   local p="$1" c
   [ -n "$p" ] || return 0
   case "$PROTECTED" in *" $p "*) kept+=("$p (other programs need it)"); return 0 ;; esac
-  # (any Python and its GTK bindings: FreeBSD py311-pygobject, NetBSD python314 / py314-cairo, OpenBSD python%3, ...)
-  case "$p" in python3*|python%3|py3[0-9]*-*|py3-*) kept+=("$p (other programs need it)"); return 0 ;; esac
+  # (any Python and its GTK bindings)
+  case "$p" in python3*) kept+=("$p (other programs need it)"); return 0 ;; esac
   for c in "${candidates[@]}"; do [ "$c" = "$p" ] && return 0; done
   installed "$p" && candidates+=("$p")
 }
@@ -427,7 +412,7 @@ fi
 removable=(); needed=()
 safe_set() {
   local -a S=("$@") caps keep next ok
-  local p out cap prov stable
+  local p out cap prov
   case "$FAMILY" in
     fedora)
       for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -455,19 +440,7 @@ safe_set() {
         else ok+=("$p"); fi
       done
       S=("${ok[@]}") ;;
-    arch|openbsd|netbsd) ;;   # pacman and pkg_delete refuse to break anything themselves (see remove_pkgs)
-    freebsd)
-      # pkg delete would take everything that needs these with it: keep the ones another installed package needs
-      # (again until nothing changes: keeping one can make another one needed)
-      for _ in 1 2 3 4 5 6 7 8 9 10; do
-        next=(); stable=1
-        for p in "${S[@]}"; do
-          if pkg query '%rn' "$p" 2>/dev/null | grep -qvxF -f <(printf '%s\n' "${S[@]}"); then needed+=("$p"); stable=0
-          else next+=("$p"); fi
-        done
-        S=("${next[@]}")
-        [ "$stable" -eq 1 ] && break
-      done ;;
+    arch) ;;   # pacman refuses to break anything itself (see remove_pkgs)
   esac
   removable=("${S[@]}")
 }
@@ -488,19 +461,6 @@ remove_pkgs() {
         failed=("${left[@]}")
       fi ;;
     debian) run $SUDO apt-get remove -y "$@" || failed=("$@") ;;
-    freebsd) run $SUDO pkg delete -y "$@" || failed=("$@") ;;
-    openbsd|netbsd)
-      # pkg_delete refuses a package something else needs: one by one, twice (one needed only by another on the list
-      # goes in the second round)
-      if ! run $SUDO pkg_delete "$@" >/dev/null 2>&1; then
-        local left=("$@") again
-        for _ in 1 2; do
-          again=()
-          for p in "${left[@]}"; do installed "$p" || continue; run $SUDO pkg_delete "$p" >/dev/null 2>&1 || again+=("$p"); done
-          left=("${again[@]}")
-        done
-        failed=("${left[@]}")
-      fi ;;
   esac
   for p in "${failed[@]}"; do needed+=("$p"); done
   for p in "$@"; do
@@ -583,10 +543,7 @@ fi
 [ "${#kept[@]}" -gt 0 ] && { say "kept:"; printf '     - %s\n' "${kept[@]}"; }
 cat <<MSG
 
-Done. Log out and pick your other desktop at the login screen.$(case "$FAMILY" in freebsd) echo "
-  - Libraries the removed programs pulled in can go too:  sudo pkg autoremove" ;; openbsd) echo "
-  - Libraries the removed programs pulled in can go too:  doas pkg_delete -a" ;; netbsd) echo "
-  - Libraries the removed programs pulled in can go too:  pkgin autoremove" ;; esac)
+Done. Log out and pick your other desktop at the login screen.
   - Your copy of the repo (the folder with this script) is still there - delete it when you no longer need it.
   - Programs you already had before installing, and your own files, were not touched.
 MSG

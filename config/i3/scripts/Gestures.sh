@@ -9,7 +9,7 @@
 # (Touchégg is made for Linux only: elsewhere there is nothing to do)
 command -v touchegg >/dev/null 2>&1 || exit 0
 # shellcheck disable=SC1091
-. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # flock, setsid, sed_inplace, pick_random everywhere
+. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # sed_inplace, pick_random
 # is it running? (ps, not pgrep: a just-killed copy that has not been cleaned up yet must not count)
 running() { ps -U "$(id -un)" -o stat=,comm= 2>/dev/null | awk -v n="touchegg" '$2 == n && $1 !~ /^Z/ {f = 1} END {exit !f}'; }
 exec 9>"${XDG_RUNTIME_DIR:-/tmp}/i3dots-gestures-$UID.lock"

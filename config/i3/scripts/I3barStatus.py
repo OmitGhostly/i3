@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""The items on the right of i3's own bar (i3bar), used where polybar is not installed - NetBSD has no package of it
+"""The items on the right of i3's own bar (i3bar), used where polybar is not installed
 (polybar/launch.sh then turns i3bar on). The same items as polybar's, in the same order and with the same clicks:
 Wi-Fi, volume, brightness, stay awake, night light, battery, CPU, memory, GPU, the date and the power button.
-The values come from Platform.sh (and the scripts polybar runs), so they work on Linux and the BSDs alike.
+The values come from Platform.sh (and the scripts polybar runs).
 Speaks i3bar's protocol on standard output and reads the clicks from standard input."""
 import json
 import os
@@ -45,8 +45,7 @@ def items():
                 if line.startswith("BAR_RIGHT="):
                     # (BAR_RIGHT='a b c': unquote the shell word, then one item per name)
                     names = " ".join(shlex.split(line.split("=", 1)[1])).split()
-                    got = [m[:-4] if m.endswith("-sys") else m for m in names]
-                    return [m for m in got if m != "tray"] or DEFAULT_ITEMS
+                    return [m for m in names if m != "tray"] or DEFAULT_ITEMS
     except (OSError, ValueError):
         pass
     return DEFAULT_ITEMS

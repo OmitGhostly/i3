@@ -414,7 +414,7 @@ for_window [class="^(mpv|vlc)$"] border pixel 0
 
 # ---- autostart (ported from lua/startup.lua) --------------------------------------
 # background services (the config updater, notifications) need to know the display; systemctl is the fallback
-# where dbus-update-activation-environment is not installed (Fedora: dbus-tools). No systemd (the BSDs): D-Bus only
+# where dbus-update-activation-environment is not installed (Fedora: dbus-tools). No systemd: D-Bus only
 exec --no-startup-id sh -c 'if command -v systemctl >/dev/null 2>&1; then dbus-update-activation-environment --systemd DISPLAY XAUTHORITY 2>/dev/null || systemctl --user import-environment DISPLAY XAUTHORITY; else dbus-update-activation-environment DISPLAY XAUTHORITY 2>/dev/null; fi'
 exec --no-startup-id ~/.config/i3/scripts/Input.sh
 exec --no-startup-id ~/.config/i3/scripts/Polkit.sh
@@ -440,7 +440,7 @@ exec --no-startup-id ~/.config/i3/scripts/first-run.sh
 exec --no-startup-id ~/.config/i3/scripts/Update.sh --login
 # re-launched on every reload so the bar picks up new colors / monitors
 exec_always --no-startup-id ~/.config/polybar/launch.sh
-# i3's own bar instead, only where polybar is not installed (NetBSD has no package of it): launch.sh writes it here
+# i3's own bar instead, only where polybar is not installed: launch.sh writes it here
 include ~/.config/i3/bar-fallback.conf
 # Hyprland-style spiral tiling (new windows split the focused one along its longer side). Only one copy runs;
 # it follows i3 through restarts. Mode: SUPER+ALT+T or Settings > Appearance > Window tiling.

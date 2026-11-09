@@ -5,8 +5,8 @@
 #  License: GNU GPLv3
 #  SPDX-License-Identifier: GPL-3.0-or-later
 # ==================================================
-# The media keys: playerctl (any player that speaks MPRIS). Where playerctl is missing (NetBSD has no package of
-# it) or sees no player, the music menu's mpv (RofiBeats.sh) through its control socket.
+# The media keys: playerctl (any player that speaks MPRIS). Where playerctl is missing or sees no player, the
+# music menu's mpv (RofiBeats.sh) through its control socket.
 
 music_icon="${XDG_CONFIG_HOME:-$HOME/.config}/i3/icons/music.png"
 mpv_sock="${XDG_RUNTIME_DIR:-/tmp}/i3dots-mpv-$(id -u).sock"

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #  KoolDots (2026)
-# Airplane Mode: all Wi-Fi off, or back on. Linux: rfkill; FreeBSD / OpenBSD / NetBSD: the wireless interface down
-# or up (Platform.sh - that needs root there: a doas or sudo rule that lets you run ifconfig without a password).
+# Airplane Mode: all Wi-Fi off, or back on (rfkill, through Platform.sh).
 
 notif="${XDG_CONFIG_HOME:-$HOME/.config}/i3/icons/airplane.png"
 P="${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/Platform.sh"

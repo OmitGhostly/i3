@@ -7,13 +7,10 @@ cfg="$cfgdir/fastfetch/config-pokemon.jsonc"
 command -v fastfetch >/dev/null || exit 0
 # Greet only once per terminal window, no matter how many times this is called (a duplicated line in .zshrc,
 # a shell that restarts itself, a prompt theme that re-reads the rc file...). The key is the terminal's session.
-# (OpenBSD's ps has no "sid": its "sess" names the session too)
 sid=$(ps -o sid= -p $$ 2>/dev/null | tr -d ' ')
 started=""
 if [ -n "$sid" ] && [ "$sid" != 0 ]; then
   started=$(ps -o lstart= -p "$sid" 2>/dev/null | tr -c 'A-Za-z0-9' '_')
-else
-  sid=$(ps -o sess= -p $$ 2>/dev/null | tr -cd 'A-Za-z0-9')
 fi
 if [ -n "$sid" ]; then
   lockdir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/i3dots-pokefetch-$UID"

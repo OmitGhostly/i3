@@ -5,16 +5,9 @@
 # Settings > Wi-Fi; switch the icon back on there ("Wi-Fi icon in the tray").
 #   NetApplet.sh           hide or show the icon as saved, start the applet if it is not running (i3 runs this)
 #   NetApplet.sh restart   the same, restarting the applet
-# FreeBSD / GhostBSD have no NetworkManager: there NetworkMgr's tray icon is started instead.
 # shellcheck disable=SC1091
-. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # flock, setsid, sed_inplace, pick_random everywhere
-# FreeBSD / GhostBSD: no NetworkManager - NetworkMgr's tray icon joins Wi-Fi networks there (started once)
-if ! command -v nm-applet >/dev/null 2>&1; then
-  if command -v networkmgr >/dev/null 2>&1 && ! pgrep -u "$UID" -f 'networkmgr' >/dev/null 2>&1; then
-    networkmgr >/dev/null 2>&1 </dev/null &
-  fi
-  exit 0
-fi
+. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # sed_inplace, pick_random
+command -v nm-applet >/dev/null 2>&1 || exit 0
 # is it running? (ps, not pgrep: a just-killed copy that has not been cleaned up yet must not count)
 running() { ps -U "$(id -un)" -o stat=,comm= 2>/dev/null | awk -v n="nm-applet" '$2 == n && $1 !~ /^Z/ {f = 1} END {exit !f}'; }
 exec 9>"${XDG_RUNTIME_DIR:-/tmp}/i3dots-netapplet-$UID.lock"

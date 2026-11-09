@@ -5,8 +5,8 @@
 #  License: GNU GPLv3
 #  SPDX-License-Identifier: GPL-3.0-or-later
 # ==================================================
-# Screen brightness. A backlight (laptops) through Platform.sh: brightnessctl (Linux), FreeBSD's backlight,
-# xbacklight (screens RandR can dim: OpenBSD, NetBSD, ...), OpenBSD's wsconsctl.
+# Screen brightness. A backlight (laptops) through Platform.sh: brightnessctl, else xbacklight (screens RandR can
+# dim).
 # Screens without one - most desktop monitors - get their picture dimmed instead (software brightness: the colour
 # ramp, through redshift together with the night light, see Nightlight.sh). It is saved, and put back at login.
 #   Brightness.sh --inc | --dec    10% brighter / darker, with a notification (the brightness keys, the bar)

@@ -33,10 +33,6 @@ import sys
 
 CONFIG_DIR = os.path.join((os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")), "i3")
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
-# Linux, or FreeBSD (GhostBSD too), OpenBSD, NetBSD: some things work differently there (the tests set I3DOTS_OS)
-SYSTEM = {"ghostbsd": "freebsd"}.get((os.environ.get("I3DOTS_OS") or os.uname().sysname).lower(),
-                                     (os.environ.get("I3DOTS_OS") or os.uname().sysname).lower())
-IS_BSD = SYSTEM in ("freebsd", "openbsd", "netbsd")
 SETTINGS_FILE = os.environ.get("I3DOTS_SETTINGS", os.path.join(CONFIG_DIR, "settings.json"))
 ALL = "__all__"          # key used for "all mice and touchpads"
 ROTATIONS = [("normal", "Landscape"), ("left", "Portrait (left)"),
@@ -645,7 +641,7 @@ def current_cursor():
 def list_cursor_themes():
     """Names of installed cursor themes (icon themes that ship a cursors/ folder)."""
     dirs = [os.path.expanduser("~/.icons"), os.path.expanduser("~/.local/share/icons"),
-            "/usr/share/icons", "/usr/local/share/icons", "/usr/pkg/share/icons"]
+            "/usr/share/icons", "/usr/local/share/icons"]
     dirs += [os.path.join(d, "icons") for d in os.environ.get("XDG_DATA_DIRS", "").split(":") if d]
     found = set()
     for d in dirs:
@@ -743,8 +739,7 @@ def _link_cursor_theme(theme, data_home):
     dst = os.path.expanduser(os.path.join("~/.icons", theme))
     if not os.path.isdir(os.path.join(src, "cursors")) or os.path.lexists(dst) or DRY:
         return
-    if any(os.path.isdir(os.path.join(d, theme, "cursors")) for d in ("/usr/share/icons", "/usr/local/share/icons",
-                                                                     "/usr/pkg/share/icons", "/usr/X11R6/share/icons")):
+    if any(os.path.isdir(os.path.join(d, theme, "cursors")) for d in ("/usr/share/icons", "/usr/local/share/icons")):
         return                                         # (the system has it where every program looks)
     try:
         os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -1503,8 +1498,6 @@ GESTURES_SCRIPT = os.path.join(CONFIG_DIR, "scripts", "Gestures.sh")
 WORKSPACE_SCRIPT = os.path.join(CONFIG_DIR, "scripts", "Workspace.py")
 TOUCHEGG_HINT = ("Swipe gestures need Touchégg:  Arch/CachyOS: sudo pacman -S touchegg   |   Fedora: sudo dnf install "
                  "touchegg   |   Debian/Ubuntu: sudo apt install touchegg   - then: sudo systemctl enable --now touchegg")
-if IS_BSD:
-    TOUCHEGG_HINT = "Swipe gestures use Touchégg, which only runs on Linux."
 
 
 def gesture_choice(settings):
@@ -1706,33 +1699,9 @@ def bar_power_supply():
     return battery, charger
 
 
-_platform_cache = {}
-
-
-def platform_has(what):
-    """Platform.sh has WHAT (battery, backlight, wifi, volume): asked once per run of this program."""
-    if what not in _platform_cache:
-        try:
-            r = subprocess.run(["sh", os.path.join(SCRIPTS_DIR, "Platform.sh"), "has", what],
-                               capture_output=True, timeout=15)
-            _platform_cache[what] = r.returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
-            _platform_cache[what] = False
-    return _platform_cache[what]
-
-
-# items whose polybar module only works on Linux: on the BSDs the *-sys one (Platform.sh) shows them
-BAR_SYS_ITEMS = ("network", "pulseaudio", "backlight", "battery", "cpu", "memory")
-
-
 def bar_items(choice):
     """The items on the right of the bar, left to right. An item this computer has no hardware for (battery on a
     desktop, Wi-Fi, Bluetooth, screen brightness, a GPU sensor) is left out instead of leaving an empty block."""
-    if IS_BSD:
-        have = {"network": platform_has("wifi"), "bluetooth": False, "pulseaudio": platform_has("volume"),
-                "backlight": platform_has("backlight"), "battery": platform_has("battery"),
-                "gpu": bool(shutil.which("nvidia-smi"))}
-        return (["playerctl"] if choice["media"] else []) + [m for m in BAR_ITEMS if have.get(m, True)]
     have = {"network": bool(_sysfs("class/net/*/wireless") or _sysfs("class/net/*/phy80211")),
             "bluetooth": bool(_sysfs("class/bluetooth/hci*")) and bool(shutil.which("bluetoothctl")),
             "backlight": bool(_sysfs("class/backlight/*")) and bool(shutil.which("brightnessctl")),
@@ -1990,8 +1959,8 @@ def write_bar_style(settings):
 
 
 def bar_modules(items):
-    """The polybar module for each item: on the BSDs, the *-sys one where polybar's own only works on Linux."""
-    return [m + "-sys" if IS_BSD and m in BAR_SYS_ITEMS else m for m in items]
+    """The polybar module for each item."""
+    return list(items)
 
 
 def bar_env(settings):
@@ -2014,15 +1983,15 @@ def bar_env(settings):
 
 
 def i3bar_conf(settings):
-    """i3's own bar (i3bar), used where polybar is not installed - NetBSD has no package of it: the position, text
+    """i3's own bar (i3bar), used where polybar is not installed: the position, text
     size, colours and monitors of the bar you chose; I3barStatus.py fills in the items. polybar/launch.sh writes this
     to i3/bar-fallback.conf (which the i3 config includes) only when there is no polybar."""
     choice = bar_choice(settings)
     c = bar_colors(saved_accent(settings))
     pt = ("%.2f" % (BAR_SIZES[choice["size"]]["text"][0] * 0.75)).rstrip("0").rstrip(".")
     bg = norm_accent(choice["bg_color"]) or "#000000"
-    out = ["# i3's own bar, written by polybar/launch.sh because polybar is not installed (NetBSD has no package of",
-           "# it): the bar you chose in Settings > Appearance, as far as i3bar can show it. Empty with polybar.",
+    out = ["# i3's own bar, written by polybar/launch.sh because polybar is not installed: the bar you chose in",
+           "# Settings > Appearance, as far as i3bar can show it. Empty with polybar.",
            "bar {",
            "    id i3dots",
            '    status_command exec "$HOME/.config/i3/scripts/I3barStatus.py"',
@@ -2434,15 +2403,11 @@ PA_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,199}\Z")     # device 
 PA_HINT = ("Sound control needs the pactl tool (it works with PipeWire and PulseAudio):\n"
            "Fedora: sudo dnf install pulseaudio-utils   |   Arch: sudo pacman -S libpulse   |   "
            "Debian/Ubuntu: sudo apt install pulseaudio-utils")
-if IS_BSD:
-    PA_HINT = ("This tab needs PulseAudio (pactl), which %s does not use by default. The volume keys and the bar's "
-               "volume item work without it, with the system's own mixer (FreeBSD: mixer, OpenBSD: sndioctl, "
-               "NetBSD: mixerctl)." % {"freebsd": "FreeBSD", "openbsd": "OpenBSD", "netbsd": "NetBSD"}[SYSTEM])
 VOLUME_MAX = 150                                                       # same limit as the volume keys
 SOUNDS_CONF = os.path.join(CONFIG_DIR, "sounds.conf")
 SOUND_DEFAULT = {"volume_feedback": True, "screenshot_sound": True}
-TEST_SOUNDS = [os.path.join(share, "sounds", f)                        # (Linux, then the BSDs' /usr/local, NetBSD's /usr/pkg)
-               for share in ("/usr/share", "/usr/local/share", "/usr/pkg/share")
+TEST_SOUNDS = [os.path.join(share, "sounds", f)
+               for share in ("/usr/share", "/usr/local/share")
                for f in ("freedesktop/stereo/audio-volume-change.oga", "freedesktop/stereo/bell.oga",
                          "freedesktop/stereo/complete.oga", "alsa/Front_Center.wav")]
 
@@ -2632,9 +2597,6 @@ BT_MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\Z")
 BT_HINT = ("Bluetooth is not set up on this computer. Install the BlueZ tools and start the service:\n"
            "Fedora: sudo dnf install bluez   |   Arch: sudo pacman -S bluez bluez-utils   |   Debian/Ubuntu: sudo apt install bluez\n"
            "then: sudo systemctl enable --now bluetooth")
-if IS_BSD:
-    BT_HINT = ("This tab uses BlueZ, which only runs on Linux. FreeBSD and NetBSD pair Bluetooth devices with their "
-               "own tools (FreeBSD Handbook: Bluetooth; NetBSD: btpair); OpenBSD has no Bluetooth support.")
 
 
 def bt_ctl(args, timeout=20, agent=None):
@@ -2724,12 +2686,6 @@ def bt_pair(mac):
 NM_HINT = ("Wi-Fi is managed by NetworkManager, which was not found.\n"
            "Fedora: sudo dnf install NetworkManager-wifi   |   Arch: sudo pacman -S networkmanager   |   Debian/Ubuntu: sudo apt install network-manager\n"
            "then: sudo systemctl enable --now NetworkManager")
-if IS_BSD:
-    NM_HINT = {"freebsd": "Wi-Fi on FreeBSD and GhostBSD: the network icon in the tray (NetworkMgr) joins networks.",
-               "openbsd": "Wi-Fi on OpenBSD:  doas ifconfig iwx0 join NAME wpakey PASSWORD  (or /etc/hostname.iwx0; "
-                          "your card may be iwm0, athn0, ...).",
-               "netbsd": "Wi-Fi on NetBSD: add the network to /etc/wpa_supplicant.conf and start wpa_supplicant "
-                         "(see the NetBSD guide, Networking)."}[SYSTEM]
 
 
 NET_APPLET = os.path.join(CONFIG_DIR, "scripts", "NetApplet.sh")
@@ -2976,64 +2932,15 @@ def _mask_prefix(mask):
         return None
 
 
-def _ifconfig_devices():
-    """FreeBSD / OpenBSD / NetBSD: the adapters from ifconfig and the default route (read only)."""
-    text = query(["ifconfig", "-a"])
-    gw, gw_if = "", ""
-    route = query(["route", "-n", "get", "default"])
-    m = re.search(r"^\s*gateway:\s*(\S+)", route, re.M)
-    if m and _ip_ok(m.group(1)):
-        gw = m.group(1)
-        m2 = re.search(r"^\s*interface:\s*(\S+)", route, re.M)
-        gw_if = m2.group(1) if m2 else ""
-    devs, dns = [], _resolv_dns()
-    for blk in re.split(r"\n(?=\S)", text):
-        m = re.match(r"^([A-Za-z0-9_.]+):\s+flags=", blk)
-        if not m or re.match(r"(lo|pflog|pfsync|enc|gif|stf|faith|bridge|tun|tap|wg|vlan|carp|lagg|ipsec)\d",
-                             m.group(1)):
-            continue
-        iface = m.group(1)
-        mac = re.search(r"^\s+(?:ether|lladdr|address:)\s+([0-9A-Fa-f:]{17})", blk, re.M)
-        if not mac:
-            continue                                   # (not a network card)
-        kind = "wifi" if re.search(r"\bssid\b|\bnwid\b|ieee80211:|IEEE ?802\.11", blk) else "ethernet"
-        ip4 = []
-        for a, rest in re.findall(r"^\s+inet\s+(\S+)(.*)$", blk, re.M):
-            if "/" in a:
-                ip4.append(a)
-            else:
-                mk = re.search(r"netmask\s+(\S+)", rest)
-                pre = _mask_prefix(mk.group(1)) if mk else None
-                ip4.append("%s/%d" % (a, pre) if pre is not None else a)
-        ip6 = []
-        for a, rest in re.findall(r"^\s+inet6\s+(\S+)(.*)$", blk, re.M):
-            a = a.split("%")[0]
-            if a.lower().startswith("fe80"):
-                continue
-            pl = re.search(r"prefixlen\s+(\d+)", rest)
-            ip6.append(a if "/" in a or not pl else "%s/%s" % (a, pl.group(1)))
-        st = re.search(r"^\s+status:\s*(.+)$", blk, re.M)
-        active = bool(st and st.group(1).strip() in ("active", "associated")) or (not st and bool(ip4))
-        ssid = re.search(r"\b(?:ssid|nwid|join)\s+(\"[^\"]*\"|\S+)", blk)
-        devs.append({"iface": iface, "type": kind, "state": "connected" if active and ip4 else "disconnected",
-                     "status": "Connected" if active and ip4 else ("Cable unplugged" if kind == "ethernet" and st
-                                                                   and "no carrier" in st.group(1) else "Not connected"),
-                     "connected": bool(active and ip4),
-                     "connection": ssid.group(1).strip('"') if ssid and kind == "wifi" else "", "uuid": "",
-                     "mac": mac.group(1), "ip4": ip4, "gw4": gw if iface == gw_if else "",
-                     "dns": dns if ip4 else [], "ip6": ip6})
-    return devs
-
-
 def net_devices():
     """The computer's Wi-Fi and Ethernet adapters with their addresses: NetworkManager where it runs (then they can
-    be changed), else `ip` (Linux) or ifconfig (the BSDs). [{'iface', 'type', 'status', 'connected', 'connection',
+    be changed), else `ip`. [{'iface', 'type', 'status', 'connected', 'connection',
     'uuid', 'mac', 'ip4', 'gw4', 'dns', 'ip6'}]"""
     if shutil.which("nmcli"):
         devs = _nm_devices()
         if devs is not None:
             return devs
-    return _ifconfig_devices() if IS_BSD else _ip_devices()
+    return _ip_devices()
 
 
 def nm_ip_settings(uuid):
@@ -3317,7 +3224,7 @@ def _remove_block(text, marks):
 
 def apply_proxy(settings):
     """Use the proxy everywhere it is read:
-      programs started from the next login      ~/.xprofile (the BSDs' ~/.xinitrc reads it) and environment.d
+      programs started from the next login      ~/.xprofile and environment.d
       Firefox, GTK / GNOME apps (at once)        GNOME's proxy setting (gsettings), where it exists
       programs D-Bus / systemd start from now    their activation environment"""
     cfg = proxy_choice(settings)
@@ -5799,7 +5706,7 @@ def launch_gui(confirm=True, tab=None):
         wp.pack_start(w_, False, False, 0)
         wp.reorder_child(w_, wp.get_children().index(tray_row))
     if not nm_ok:
-        # no NetworkManager (the BSDs, or a Linux without it): only what works here - the hint (wf_msg) and the
+        # no NetworkManager: only what works here - the hint (wf_msg) and the
         # adapter's details; the switch, the list and its buttons, and the tray icon switch are NetworkManager's
         kids_ = wp.get_children()
         at_ = kids_.index(tray_row)
@@ -5826,15 +5733,6 @@ def launch_gui(confirm=True, tab=None):
         ep.pack_start(dim("A cable that is plugged in connects by itself. 'IP settings' sets a fixed address or your "
                           "own DNS servers for a connection (Wi-Fi networks have the same button on the Wi-Fi "
                           "part); changing them reconnects it."), False, False, 0)
-    elif IS_BSD:
-        ep.pack_start(dim({"openbsd": "OpenBSD sets the addresses in /etc/hostname.<adapter> (for example "
-                                      "'inet autoconf' or a fixed 'inet 192.168.1.50 255.255.255.0'); see "
-                                      "hostname.if(5). Shown here as they are now.",
-                           "netbsd": "NetBSD sets the addresses in /etc/ifconfig.<adapter> or with dhcpcd in "
-                                     "/etc/rc.conf. Shown here as they are now."}.get(
-            SYSTEM, "FreeBSD and GhostBSD set the addresses in /etc/rc.conf (for example ifconfig_em0=\"DHCP\" or a "
-                    "fixed \"inet 192.168.1.50/24\"), or with NetworkMgr in the tray. Shown here as they are now.")),
-            False, False, 0)
     else:
         ep.pack_start(dim(NM_HINT), False, False, 0)
 
@@ -6029,9 +5927,7 @@ def launch_gui(confirm=True, tab=None):
     vp.pack_start(dim("Add a VPN from the file your VPN provider gives you: a WireGuard file (.conf) or an OpenVPN "
                       "file (.ovpn). Connecting may ask for a password. Other kinds (Cisco, IPsec...) are set up in the "
                       "full network editor." if nm_ok else
-                      ("VPN connections here use NetworkManager, which only runs on Linux. On this system use "
-                       "WireGuard (wg-quick, or 'ifconfig wg' on OpenBSD) or OpenVPN from the packages."
-                       if IS_BSD else NM_HINT)), False, False, 0)
+                      NM_HINT), False, False, 0)
     if not nm_ok:
         for w_ in (vpn_card, vpn_btns, vpn_btns2):
             w_.set_no_show_all(True)
@@ -6854,8 +6750,8 @@ def main(argv):
         # `python3` may be a pyenv/conda/venv one without GTK: retry with the system Python that has it
         if not os.environ.get("I3DOTS_REEXEC"):
             check = "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk"
-            cands = ["/usr/bin/python3", "/usr/local/bin/python3", "/usr/pkg/bin/python3"]
-            for d in ("/usr/bin", "/usr/local/bin", "/usr/pkg/bin"):
+            cands = ["/usr/bin/python3", "/usr/local/bin/python3"]
+            for d in ("/usr/bin", "/usr/local/bin"):
                 cands += sorted(glob.glob(d + "/python3.*[0-9]"), reverse=True)
             for cand in cands:
                 if os.path.exists(cand) and os.path.realpath(cand) != os.path.realpath(sys.executable):
@@ -6865,10 +6761,7 @@ def main(argv):
         print("The settings window needs GTK for Python. Install it:\n"
               "  Fedora:  sudo dnf install python3-gobject gtk3\n"
               "  Arch:    sudo pacman -S python-gobject gtk3\n"
-              "  Debian:  sudo apt install python3-gi gir1.2-gtk-3.0\n"
-              "  FreeBSD / GhostBSD:  sudo pkg install py311-pygobject gtk3   (py3XX: your python3's version)\n"
-              "  OpenBSD: doas pkg_add py3-gobject3 gtk+3\n"
-              "  NetBSD:  pkgin install py314-gobject3 gtk3+   (py3XX: your python3's version)", file=sys.stderr)
+              "  Debian:  sudo apt install python3-gi gir1.2-gtk-3.0", file=sys.stderr)
         os.system("notify-send 'Settings' 'Install python3-gobject (GTK) to use the settings window' 2>/dev/null")
         return 1
     return 0

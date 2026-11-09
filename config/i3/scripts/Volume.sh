@@ -6,7 +6,7 @@
 #  SPDX-License-Identifier: GPL-3.0-or-later
 # ==================================================
 # Scripts for volume controls for audio and mic. The sound system is asked through Platform.sh: pamixer where a sound
-# server runs (PipeWire / PulseAudio), else the system's own mixer (FreeBSD mixer, OpenBSD sndioctl, NetBSD mixerctl).
+# server runs (PipeWire / PulseAudio), else PipeWire's wpctl.
 
 iDIR="${XDG_CONFIG_HOME:-$HOME/.config}/i3/icons"
 sDIR="${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts"

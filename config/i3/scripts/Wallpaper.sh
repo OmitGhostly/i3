@@ -7,7 +7,7 @@
 # (AutoTiling.py watches i3 for that), so it is drawn for the real layout and never ends up misaligned.
 # The same picture fills every monitor.
 # shellcheck disable=SC1091
-. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # flock, setsid, sed_inplace, pick_random everywhere
+. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # sed_inplace, pick_random
 WALL_DIR="${WALL_DIR:-$HOME/Pictures/wallpapers}"
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/i3"; mkdir -p "$cache"
 state="${XDG_STATE_HOME:-$HOME/.local/state}/i3wm-dots"; mkdir -p "$state"

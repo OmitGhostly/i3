@@ -13,7 +13,7 @@
 #    --no-pokemon    skip pokescript and the shiny Mimikyu fastfetch greeting in the terminal
 #    --no-ghostty    do not install Ghostty (kitty is used as the terminal instead)
 #    --no-backup     overwrite existing configs instead of moving them aside
-#    --no-auto-update do not check for a newer desktop config after system updates (pacman -Syu / dnf upgrade / pkg upgrade)
+#    --no-auto-update do not check for a newer desktop config after system updates (pacman -Syu / dnf upgrade / apt upgrade)
 #    --update        quick re-install of the config files only (used by i3dots-update: no packages, no password)
 #    --restore       put back the newest *.bak-* backups and exit
 #    --dry-run       show what would happen without changing anything
@@ -23,10 +23,10 @@
 #    bash <(curl -fsSL https://raw.githubusercontent.com/OmitGhostly/i3/main/install.sh)
 #
 #  Package managers: dnf (Fedora - the main target), pacman (Arch & derivatives),
-#  apt (Debian, Ubuntu, Mint, Pop!_OS), pkg (FreeBSD, GhostBSD), pkg_add (OpenBSD),
-#  pkgin (NetBSD). Anything else: install the programs yourself, then run with
-#  --no-packages. On a BSD, install bash and git first, then clone and run this
-#  script (README.md, "Install on BSD", has the command for each system).
+#  apt (Debian, Ubuntu, Mint, Pop!_OS). Anything else: install the programs
+#  yourself, then run with --no-packages.
+#  FreeBSD, GhostBSD, OpenBSD and NetBSD have their own version of these dots:
+#  https://github.com/OmitGhostly/i3-bsd
 #  A log of every run is written to ~/.cache/i3wm-dots-install.log
 # =============================================================================
 set -uo pipefail
@@ -97,12 +97,12 @@ if [ "$dry" -eq 0 ]; then
 fi
 
 # ---- privileges ---------------------------------------------------------------
-# Packages are installed as root: through sudo, else doas (the BSDs; it needs a rule in doas.conf), else su (asks
+# Packages are installed as root: through sudo, else doas (it needs a rule in /etc/doas.conf), else su (asks
 # for root's password). $SUDO is put in front of those commands.
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then "$@"
   elif command -v sudo >/dev/null 2>&1; then sudo "$@"
-  elif command -v doas >/dev/null 2>&1 && { [ -f /etc/doas.conf ] || [ -f /usr/local/etc/doas.conf ] || [ -f /usr/pkg/etc/doas.conf ]; }; then doas "$@"
+  elif command -v doas >/dev/null 2>&1 && [ -f /etc/doas.conf ]; then doas "$@"
   else su root -c "$(printf '%q ' "$@")"; fi
 }
 if [ "$(id -u)" -eq 0 ]; then
@@ -115,15 +115,35 @@ else
   fi
 fi
 
+# ---- FreeBSD, GhostBSD, OpenBSD and NetBSD: their own version of these dots ------------------------------------
+# A BSD desktop installed from here before the split gets its updates from the BSD repo from now on, and that repo's
+# installer takes over right away; a new install there is pointed to it.
+BSD_REPO="${I3DOTS_BSD_REPO:-https://github.com/OmitGhostly/i3-bsd.git}"
+bsd_moved() {
+  local u="${XDG_DATA_HOME:-$HOME/.local/share}/i3wm-dots-updater/repo-url" tmp rc
+  if [ "$update_mode" -eq 1 ]; then
+    if [ -f "$u" ]; then printf '%s\n' "$BSD_REPO" >"$u"; fi
+    tmp="$(mktemp -d)"
+    if command -v git >/dev/null 2>&1 && git clone -q --depth 1 "$BSD_REPO" "$tmp/i3-bsd" >/dev/null 2>&1 \
+       && [ -f "$tmp/i3-bsd/install.sh" ]; then
+      say "this is $(uname -s): FreeBSD, GhostBSD, OpenBSD and NetBSD have their own version now - continuing with it"
+      say "(updates come from $BSD_REPO from now on)"
+      bash "$tmp/i3-bsd/install.sh" "$@"; rc=$?
+      # (the version installed now, for the updater - it wrote down this repo's)
+      [ "$rc" -eq 0 ] && [ -d "${u%/*}" ] && git -C "$tmp/i3-bsd" rev-parse HEAD >"${u%/*}/handoff" 2>/dev/null
+      rm -rf "$tmp"; exit "$rc"
+    fi
+    rm -rf "$tmp"
+    die "could not download the BSD version ($BSD_REPO) - updates come from there from now on: try i3dots-update again later"
+  fi
+  die "This is the Linux version. FreeBSD, GhostBSD, OpenBSD and NetBSD have their own:
+   https://github.com/OmitGhostly/i3-bsd   (README.md there has the install command for each system)"
+}
+case "${I3DOTS_OS:-$(uname -s)}" in FreeBSD|OpenBSD|NetBSD|DragonFly) bsd_moved "$@" ;; esac
+
 # ---- distro detection -----------------------------------------------------------
 detect_family() {
   local f="${I3DOTS_OS_RELEASE:-/etc/os-release}" id="" like=""
-  # the BSDs (GhostBSD is FreeBSD with its own package repository)
-  case "${I3DOTS_OS:-$(uname -s)}" in
-    FreeBSD) echo freebsd; return ;;
-    OpenBSD) echo openbsd; return ;;
-    NetBSD)  echo netbsd; return ;;
-  esac
   if [ -r "$f" ]; then
     # shellcheck source=/dev/null
     id="$( . "$f"; echo "${ID:-}" )"
@@ -138,15 +158,6 @@ detect_family() {
   esac
 }
 FAMILY="$(detect_family)"
-case "$FAMILY" in freebsd|openbsd|netbsd) BSD=1 ;; *) BSD=0 ;; esac
-SYSNAME="$FAMILY"
-if [ "$FAMILY" = freebsd ]; then
-  SYSNAME=FreeBSD
-  { command -v ghostbsd-version >/dev/null 2>&1 || command -v update-station >/dev/null 2>&1 \
-      || grep -qi ghostbsd /etc/os-release /var/run/os-release 2>/dev/null; } && SYSNAME=GhostBSD
-fi
-[ "$FAMILY" = openbsd ] && SYSNAME=OpenBSD
-[ "$FAMILY" = netbsd ] && SYSNAME=NetBSD
 
 # ---- bootstrap: script was run without the repo next to it (curl | bash) -------
 # (piped from curl the script has no folder of its own: never treat the current directory as the repo by accident)
@@ -157,9 +168,6 @@ if [ ! -f "$here/install.sh" ] || [ ! -f "$here/config/i3/config" ]; then
       fedora) run $SUDO dnf install -y git ;;
       arch)   run $SUDO pacman -S --needed --noconfirm git ;;
       debian) run $SUDO apt-get update; run $SUDO apt-get install -y git ;;
-      freebsd) run $SUDO pkg install -y git ;;
-      openbsd) run $SUDO pkg_add -I git ;;
-      netbsd) run $SUDO pkgin -y install git ;;
       *) die "git is needed to download the dotfiles - install git and re-run" ;;
     esac
   fi
@@ -217,57 +225,14 @@ packages_for() {
                   policykit-1-gnome|polkit-gnome|mate-polkit|lxpolkit libnotify-bin qalc|libqalculate-utils
                   fonts-noto-color-emoji python3-gi python3-gi-cairo gir1.2-gtk-3.0 mesa-utils pulseaudio-utils sound-theme-freedesktop
                   swappy|flameshot $common" ;;
-    # The BSDs: no brightnessctl / pamixer / BlueZ / NetworkManager / touchegg (Linux only) - Platform.sh uses the
-    # system's own mixer, backlight and battery tools instead. Names checked against each ports tree.
-    # (The Python GTK bindings follow the python3 that gets installed: see python_gtk)
-    freebsd) echo "i3 xorg polybar picom dunst rofi feh maim xdotool xclip xss-lock i3lock ImageMagick7 playerctl redshift
-                   numlockx jq curl arandr git mpv xdg-utils lxappearance fastfetch python3 gtk3 libnotify libqalculate
-                   noto-emoji freedesktop-sound-theme adwaita-icon-theme xsettingsd thunar polkit-gnome dbus xbacklight
-                   networkmgr swappy clipmenu|copyq nerd-fonts-fantasquesansmono xinput xrandr xprop xset xrdb xsetroot
-                   xdpyinfo setxkbmap mesa-demos bash" ;;
-    # (X and its programs - xrandr, xbacklight, glxinfo ... - come with OpenBSD itself: the xenocara sets)
-    openbsd) echo "i3 polybar picom dunst rofi feh maim xdotool xclip xss-lock i3lock ImageMagick playerctl redshift numlockx
-                   jq curl unzip arandr git mpv xdg-utils lxappearance fastfetch python%3 py3-gobject3 py3-cairo gtk+3
-                   libnotify libqalculate noto-emoji sound-theme-freedesktop adwaita-icon-theme xsettingsd thunar dbus
-                   clipmenu|copyq fantasquesansmono-nerd-fonts bash" ;;
-    # (NetBSD: X comes with the system's X sets; no polybar package - i3's own bar is used, see polybar/launch.sh)
-    netbsd)  echo "i3 i3status picom dunst rofi feh maim xdotool xclip xss-lock i3lock ImageMagick redshift numlockx jq curl
-                   unzip arandr git mpv xdg-utils lxappearance fastfetch pkg_alternatives python314|python313|python312
-                   gtk3+ libnotify qalculate noto-emoji-ttf sound-theme-freedesktop adwaita-icon-theme xfce4-thunar dbus
-                   xbacklight copyq nerd-fonts-FantasqueSansMono bash" ;;
   esac
 }
-
-# the Python GTK bindings for the settings window: for the python3 that is installed (FreeBSD: py311-pygobject for
-# Python 3.11; NetBSD: py314-gobject3 for 3.14), else for the newest Python the repository has them for - the settings
-# window then runs with that Python. OpenBSD's py3-* follow its python%3 by themselves. Prints "PYGOBJECT PYCAIRO".
-python_gtk() {
-  local v vs g c
-  v="$(python3 -c 'import sys; print("%d%d" % sys.version_info[:2])' 2>/dev/null)"
-  vs="$v 314 313 312 311 310"
-  for v in $vs; do
-    case "$FAMILY" in
-      freebsd) g="py$v-pygobject"; c="py$v-pycairo" ;;
-      netbsd)  g="py$v-gobject3"; c="py$v-cairo" ;;
-      *) return 0 ;;
-    esac
-    if [ "$dry" -eq 1 ] || { pkg_available "$g" && pkg_available "$c"; }; then echo "$g $c"; return 0; fi
-  done
-}
-
-# the package's own name for a name with a version or flavour mark (OpenBSD: python%3 -> python)
-pkg_stem() { printf '%s\n' "${1%%%*}"; }
-# is this exactly a package name at the start of a "name-version ..." line? (names like gtk+3 are no regex)
-first_word_is() { awk -v s="$1" 'index($0, s "-") == 1 && substr($0, length(s) + 2, 1) ~ /[0-9]/ { f = 1 } END { exit !f }'; }
 
 pkg_available() {
   case "$FAMILY" in
     fedora) dnf -q repoquery --whatprovides "$1" 2>/dev/null | grep -q . ;;
     arch)   pacman -Si "$1" >/dev/null 2>&1 ;;
     debian) [ -n "$(apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/{print $2}' | grep -v '^(none)$')" ] ;;
-    freebsd) pkg rquery '%n' "$1" 2>/dev/null | grep -qxF "$1" ;;
-    openbsd) pkg_info -Q "$(pkg_stem "$1")" 2>/dev/null | first_word_is "$(pkg_stem "$1")" ;;
-    netbsd)  pkgin search "^$(printf '%s' "$1" | sed 's/[][+.*?(){}|^$\\]/\\&/g')-[0-9]" 2>/dev/null | first_word_is "$1" ;;
     *)      return 1 ;;
   esac
 }
@@ -277,9 +242,6 @@ pkg_install() {   # pkg_install pkg...
     fedora) run $SUDO dnf install -y "$@" ;;
     arch)   run $SUDO pacman -S --needed --noconfirm "$@" ;;
     debian) run $SUDO apt-get install -y "$@" ;;
-    freebsd) run $SUDO pkg install -y "$@" ;;
-    openbsd) run $SUDO pkg_add -I "$@" ;;
-    netbsd) run $SUDO pkgin -y install "$@" ;;
   esac
 }
 
@@ -297,9 +259,6 @@ pkg_installed() {   # is it installed? (Fedora: also a file path or anything a p
     fedora) rpm -q --whatprovides "$1" >/dev/null 2>&1 ;;
     arch)   pacman -Qq "$1" >/dev/null 2>&1 ;;
     debian) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'ok installed' ;;
-    freebsd) pkg info -e "$1" 2>/dev/null ;;
-    openbsd) pkg_info -q -e "$(pkg_stem "$1")-*" >/dev/null 2>&1 ;;
-    netbsd)  pkg_info -q -e "$1" >/dev/null 2>&1 ;;
     *)      return 1 ;;
   esac
 }
@@ -360,7 +319,7 @@ prepare_shell_rc() {
         fi
       fi
       say "your shell is $sh: the fastfetch greeting, the prompt and asciiquarium are set up in ~/.${sh}rc" ;;
-    fish)      # (GhostBSD's default shell) the greeting goes into fish's own conf.d; the prompt is for bash / zsh
+    fish)      # the greeting goes into fish's own conf.d; the prompt is for bash / zsh
       say "your shell is fish: the fastfetch greeting is set up in ~/.config/fish/conf.d (the prompt is for bash and zsh)" ;;
     *)
       warn "your shell is $sh: the fastfetch greeting and the prompt are made for bash and zsh"
@@ -555,8 +514,6 @@ install_kitty() {
     pkg_install kitty && { [ "$had" -eq 1 ] || record_new_pkgs kitty; return 0; }
   fi
   # kitty's own installer (official builds from its author) into ~/.local/kitty.app, linked into ~/.local/bin
-  # (its builds are for Linux and macOS: on the BSDs only the package manager can install kitty)
-  [ "$BSD" -eq 1 ] && return 1
   command -v curl >/dev/null 2>&1 || return 1
   say "installing kitty with its official installer (sw.kovidgoyal.net) into ~/.local/kitty.app"
   # (written down first, so a stopped install still has them listed - uninstall skips any that were never made)
@@ -586,8 +543,6 @@ ensure_terminals() {
       echo "   $t: not installed (--no-packages: install it yourself, e.g. with your package manager)"
     elif "install_$t" && { [ "$dry" -eq 1 ] || command -v "$t" >/dev/null 2>&1; }; then
       echo "   $t: installed"
-    elif [ "$t" = ghostty ] && [ "$BSD" -eq 1 ] && ! pkg_available ghostty; then
-      echo "   ghostty: not packaged for $SYSNAME - kitty will be your terminal"
     elif [ "$t" = ghostty ]; then
       warn "Ghostty could not be installed - kitty will be your terminal (other ways: ghostty.org/docs/install/binary)"
     else
@@ -597,7 +552,7 @@ ensure_terminals() {
 }
 
 # ---- the file manager: yazi (opens in the terminal; Thunar stays installed as the graphical one) -------------------
-# From your distro's repos when it has it (Arch, NetBSD, FreeBSD, openSUSE, ...); Fedora: the community COPR that
+# From your distro's repos when it has it (Arch, openSUSE, ...); Fedora: the community COPR that
 # yazi's install page names; Debian/Ubuntu: the Snap Store; otherwise yazi's own release build (Linux x86_64/arm64).
 have_yazi() { command -v yazi >/dev/null 2>&1 || [ -x "$HOME/.local/bin/yazi" ] || [ -x /snap/bin/yazi ]; }
 yazi_version() {
@@ -633,7 +588,6 @@ install_yazi() {
 
 # yazi's own release build (github.com/sxyazi/yazi: static, for x86_64 and arm64 Linux) into ~/.local/bin
 install_yazi_release() {
-  [ "$BSD" -eq 1 ] && return 1                       # (no BSD builds: only the package manager can install it there)
   local arch dir tmp rc=1
   case "$(uname -m)" in
     x86_64|amd64)  arch=x86_64 ;;
@@ -666,9 +620,6 @@ yazi_extras() {
     arch)    echo "poppler 7zip|p7zip fd ripgrep fzf zoxide" ;;
     fedora)  echo "poppler-utils 7zip|p7zip fd-find ripgrep fzf zoxide" ;;
     debian)  echo "poppler-utils 7zip|p7zip-full fd-find ripgrep fzf zoxide" ;;
-    freebsd) echo "poppler-utils 7-zip|p7zip fd-find|fd ripgrep fzf zoxide" ;;
-    openbsd) echo "poppler-utils|poppler 7zip|p7zip fd ripgrep fzf zoxide" ;;
-    netbsd)  echo "poppler-utils|poppler 7-zip|p7zip fd|fd-find ripgrep fzf zoxide" ;;
   esac
 }
 
@@ -726,9 +677,6 @@ ensure_file_manager() {
   elif [ "$do_packages" -eq 0 ]; then
     echo "   yazi: not installed (--no-packages: Thunar opens instead until you install yazi)"
     return 0
-  elif [ "$BSD" -eq 1 ] && [ "$dry" -eq 0 ] && ! pkg_available yazi; then
-    echo "   yazi: not packaged for $SYSNAME - Thunar is your file manager"
-    return 0
   elif install_yazi && { [ "$dry" -eq 1 ] || have_yazi; }; then
     echo "   yazi: installed"
   else
@@ -739,7 +687,7 @@ ensure_file_manager() {
   return 0
 }
 
-# sed_file SED-ARGUMENTS... FILE: edit a file in place with any sed (GNU sed -i and BSD sed -i '' differ)
+# sed_file SED-ARGUMENTS... FILE: edit a file in place, keeping the file itself (its permissions, a link to it)
 sed_file() {
   local f="${*: -1}" t rc
   t="$f.i3tmp.$$"; CLEANUP+=("$t")
@@ -815,7 +763,7 @@ install_folder_handler() {
 
 install_packages() {
   if [ "$FAMILY" = unknown ]; then
-    warn "Unsupported distro (automated: Fedora, Arch and Debian/Ubuntu families, FreeBSD / GhostBSD, OpenBSD, NetBSD)."
+    warn "Unsupported distro (automated: Fedora, Arch and Debian/Ubuntu families; the BSDs: github.com/OmitGhostly/i3-bsd)."
     warn "Install yourself:  i3 (>=4.22) xorg polybar picom dunst rofi kitty feh maim xdotool xclip xss-lock i3lock"
     warn "  imagemagick brightnessctl pamixer playerctl pavucontrol nm-applet redshift clipmenu|copyq numlockx xinput"
     warn "  xrandr xprop xdpyinfo setxkbmap libnotify mpv qalc jq curl arandr thunar polkit-gnome|mate-polkit lxappearance fastfetch bluez blueman pactl touchegg"
@@ -823,11 +771,8 @@ install_packages() {
     warn "then re-run with --no-packages"
     return 0
   fi
-  if [ "$BSD" -eq 1 ]; then say "$SYSNAME detected - checking which packages your repository provides"
-  else say "$FAMILY-based system detected - checking which packages your repos provide"; fi
+  say "$FAMILY-based system detected - checking which packages your repos provide"
   [ "$FAMILY" = debian ] && run $SUDO apt-get update
-  [ "$FAMILY" = freebsd ] && run $SUDO pkg update
-  [ "$FAMILY" = netbsd ] && run $SUDO pkgin -y update
 
   local have=() item pick alt alts
   # shellcheck disable=SC2046
@@ -856,19 +801,6 @@ install_packages() {
   fi
   record_new_pkgs "${new[@]}"
 
-  # the settings window's Python GTK bindings, for the python3 that is now installed (FreeBSD, NetBSD)
-  if [ "$FAMILY" = freebsd ] || [ "$FAMILY" = netbsd ]; then
-    local gtk=() bnew=() g
-    read -ra gtk <<<"$(python_gtk)"
-    for g in "${gtk[@]}"; do pkg_installed "$g" || bnew+=("$g"); done
-    [ "${#gtk[@]}" -gt 0 ] || missing+=("GTK for Python (the settings window)")
-    if [ "${#gtk[@]}" -gt 0 ]; then
-      say "installing the settings window's GTK for Python: ${gtk[*]}"
-      pkg_install "${gtk[@]}" || missing+=("${gtk[@]}")
-      record_new_pkgs "${bnew[@]}"
-    fi
-  fi
-
   # Arch: try the AUR for anything the official repos did not have
   if [ "$FAMILY" = arch ] && [ "${#missing[@]}" -gt 0 ]; then
     local helper="" h m still=()
@@ -888,42 +820,12 @@ install_packages() {
     say "enabling the bluetooth service"
     run $SUDO systemctl enable --now bluetooth || warn "could not enable bluetooth - run: sudo systemctl enable --now bluetooth"
   fi
-  # the BSDs: notifications, the settings window's helpers ... need D-Bus, whose system service is not always on
-  [ "$BSD" -eq 1 ] && enable_dbus
   # three-finger swipes: Touchégg reads the touchpad in a system service; your session runs its client (Gestures.sh)
   if command -v touchegg >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 \
      && systemctl cat touchegg.service >/dev/null 2>&1 && ! systemctl is-enabled touchegg >/dev/null 2>&1; then
     say "enabling the touchegg service (touchpad swipe gestures)"
     run $SUDO systemctl enable --now touchegg || warn "could not enable touchegg - run: sudo systemctl enable --now touchegg"
   fi
-}
-
-# D-Bus on the BSDs: started at boot from now on, and now (programs find their session bus through it - see
-# bsd_session for the session itself)
-enable_dbus() {
-  case "$FAMILY" in
-    freebsd)
-      if ! grep -qE '^dbus_enable="?(YES|yes)"?' /etc/rc.conf 2>/dev/null; then
-        say "turning on D-Bus (sysrc dbus_enable=YES)"
-        run $SUDO sysrc dbus_enable=YES >/dev/null || warn "could not turn on D-Bus - run: sudo sysrc dbus_enable=YES"
-      fi
-      run $SUDO service dbus status >/dev/null 2>&1 || run $SUDO service dbus start >/dev/null 2>&1 || true ;;
-    openbsd)
-      if ! grep -q 'messagebus' /etc/rc.conf.local 2>/dev/null; then
-        say "turning on D-Bus (rcctl enable messagebus)"
-        run $SUDO rcctl enable messagebus || warn "could not turn on D-Bus - run: doas rcctl enable messagebus"
-      fi
-      run $SUDO rcctl start messagebus >/dev/null 2>&1 || true ;;
-    netbsd)
-      if [ ! -e /etc/rc.d/dbus ] && [ -e /usr/pkg/share/examples/rc.d/dbus ]; then
-        run $SUDO cp /usr/pkg/share/examples/rc.d/dbus /etc/rc.d/dbus || true
-      fi
-      if ! grep -qE '^dbus=(YES|yes)' /etc/rc.conf 2>/dev/null; then
-        say "turning on D-Bus (dbus=YES in /etc/rc.conf)"
-        run $SUDO sh -c 'echo dbus=YES >> /etc/rc.conf' || warn "could not turn on D-Bus - add dbus=YES to /etc/rc.conf"
-      fi
-      [ -x /etc/rc.d/dbus ] && { run $SUDO /etc/rc.d/dbus start >/dev/null 2>&1 || true; } ;;
-  esac
 }
 
 install_font() {
@@ -1064,28 +966,6 @@ install_aquarium_alias
 install_prompt
 install_folder_handler
 
-# ---- the BSDs: how i3 starts ------------------------------------------------------
-# startx reads ~/.xinitrc; OpenBSD's xenodm and NetBSD's xdm read ~/.xsession. i3 is started inside a D-Bus session
-# there (notifications and the settings window's helpers need one). A file you already have is left alone.
-bsd_session() {
-  [ "$BSD" -eq 1 ] && [ "$update_mode" -eq 0 ] || return 0
-  local f
-  for f in "$HOME/.xinitrc" "$HOME/.xsession"; do
-    if [ -e "$f" ]; then
-      grep -q 'i3' "$f" 2>/dev/null || warn "$(basename "$f") exists and does not start i3 - to use i3, put this line last in it:  exec dbus-launch --exit-with-session i3"
-      continue
-    fi
-    say "creating ~/$(basename "$f"): starts i3 (with a D-Bus session)"
-    [ "$dry" -eq 1 ] && continue
-    # (~/.xprofile: the cursor and proxy the Settings window chose - display managers on Linux read it themselves;
-    # ~/.Xresources: the cursor for X itself, so i3 starts with it and needs no restart to pick it up)
-    record path "$f"
-    printf '#!/bin/sh\n# created by the i3wm-dots installer: start i3 with a D-Bus session\n[ -r "$HOME/.profile" ] && . "$HOME/.profile"\n[ -r "$HOME/.xprofile" ] && . "$HOME/.xprofile"\n[ -r "$HOME/.Xresources" ] && command -v xrdb >/dev/null 2>&1 && xrdb -merge "$HOME/.Xresources"\nexec dbus-launch --exit-with-session i3\n' >"$f"
-    chmod 755 "$f"
-  done
-}
-bsd_session
-
 # ---- wallpapers / folders ---------------------------------------------------------
 run mkdir -p "$HOME/Pictures/wallpapers" "$HOME/Pictures/Screenshots"
 if [ -d "$here/wallpapers" ]; then
@@ -1128,7 +1008,7 @@ install_cursor() {
       rm -rf "$icons"/.i3dots-cursor.??????        # (left by an install that was stopped halfway)
       tmp=$(mktemp -d "$icons/.i3dots-cursor.XXXXXX") || return 0
       CLEANUP+=("$tmp")
-      # (gzip + tar: every system's tar reads this, OpenBSD's too; written down before it is moved into place, so a
+      # (gzip + tar: every tar reads this; written down before it is moved into place, so a
       # stopped install can never leave it there unrecorded)
       if gzip -dc "$tarball" | (cd "$tmp" && tar -xf -) && [ -f "$tmp/capitaine-cursors/index.theme" ] \
          && [ -e "$tmp/capitaine-cursors/cursors/left_ptr" ] && record path "$dest" && mv "$tmp/capitaine-cursors" "$dest"; then
@@ -1164,7 +1044,7 @@ setup_updates() {
     return 0
   fi
   mkdir -p "$state" "$HOME/.local/bin"
-  [ "$BSD" -eq 1 ] || mkdir -p "$cfg/systemd/user"
+  mkdir -p "$cfg/systemd/user"
   if [ "$update_mode" -eq 0 ]; then
     # where updates come from: the repo this was installed from (its GitHub address), else the main repo
     url="$(git -C "$here" config --get remote.origin.url 2>/dev/null || true)"
@@ -1178,9 +1058,8 @@ setup_updates() {
     url="$(repo_moved "$(head -n1 "$state/repo-url")")"
     [ "$url" = "$(head -n1 "$state/repo-url")" ] || { printf '%s\n' "$url" >"$state/repo-url"; say "updates now come from $url"; }
   fi
-  # (the systemd unit the Linux system hooks start; the BSDs use cron instead - see Update.sh --install-hook)
-  if [ "$BSD" -eq 0 ]; then
-    cat >"$unit" <<'UNIT'
+  # (the systemd unit the system hooks start - see Update.sh --install-hook)
+  cat >"$unit" <<'UNIT'
 [Unit]
 Description=Check GitHub for a newer i3wm-dots desktop config (started after a system update)
 
@@ -1189,8 +1068,7 @@ Type=oneshot
 ExecStart=%h/.config/i3/scripts/Update.sh --auto
 Nice=10
 UNIT
-    command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload >/dev/null 2>&1 || true
-  fi
+  command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload >/dev/null 2>&1 || true
   ln -sfn "$cfg/i3/scripts/Update.sh" "$HOME/.local/bin/i3dots-update"
   # the uninstaller, as a copy that outlives ~/.config/i3:  i3dots-uninstall
   [ -f "$here/uninstall.sh" ] && install -m 755 "$here/uninstall.sh" "$HOME/.local/bin/i3dots-uninstall"
@@ -1202,8 +1080,7 @@ UNIT
   if [ "$do_autoupdate" -eq 0 ]; then
     say "no update checks after system updates (update by hand with: i3dots-update)"
   elif [ "$do_packages" -eq 1 ] && [ "$FAMILY" != unknown ]; then
-    if [ "$BSD" -eq 1 ]; then say "setting up a check for a newer config after system updates (cron looks every 30 minutes)"
-    else say "setting up a check for a newer config after system updates (pacman -Syu / dnf upgrade / apt upgrade)"; fi
+    say "setting up a check for a newer config after system updates (pacman -Syu / dnf upgrade / apt upgrade)"
     bash "$cfg/i3/scripts/Update.sh" --install-hook || warn "could not set up the system update hook - run later: i3dots-update --install-hook"
   else
     say "to check for a newer config after system updates, run once:  i3dots-update --install-hook"
@@ -1213,10 +1090,7 @@ setup_updates
 
 # ---- sanity checks -----------------------------------------------------------------
 if [ "$dry" -eq 0 ]; then
-  # (the BSDs: no brightnessctl / pamixer - Platform.sh asks the system's own tools; NetBSD: i3's bar for polybar)
   checks="i3 polybar picom dunst rofi feh maim xdotool xclip i3lock brightnessctl pamixer playerctl notify-send xrandr xprop"
-  [ "$BSD" -eq 1 ] && checks="i3 polybar picom dunst rofi feh maim xdotool xclip i3lock playerctl notify-send xrandr xprop"
-  [ "$FAMILY" = netbsd ] && checks="i3 i3bar picom dunst rofi feh maim xdotool xclip i3lock notify-send xrandr xprop"
   for c in $checks; do
     command -v "$c" >/dev/null 2>&1 || missing+=("$c")
   done
@@ -1231,9 +1105,8 @@ if [ "$dry" -eq 0 ]; then
     if i3 -C -c "$cfg/i3/config" >/dev/null 2>&1; then say "i3 config validated OK"
     else warn "i3 rejected the config - see:  i3 -C -c ~/.config/i3/config"; fi
   fi
-  # (the BSDs keep it under /usr/local or /usr/pkg; startx / xenodm / xdm use ~/.xinitrc / ~/.xsession instead)
-  if [ ! -e /usr/share/xsessions/i3.desktop ] && [ ! -e /usr/local/share/xsessions/i3.desktop ] && [ ! -e /usr/pkg/share/xsessions/i3.desktop ]; then
-    [ "$BSD" -eq 1 ] || warn "no 'i3' session file in /usr/share/xsessions - the login screen may not list i3"
+  if [ ! -e /usr/share/xsessions/i3.desktop ] && [ ! -e /usr/local/share/xsessions/i3.desktop ]; then
+    warn "no 'i3' session file in /usr/share/xsessions - the login screen may not list i3"
   fi
   if [ "$FAMILY" = fedora ] && ! rpm -q xorg-x11-server-Xorg >/dev/null 2>&1; then
     warn "Xorg server is not installed - i3 cannot start without it:  sudo dnf install xorg-x11-server-Xorg"
@@ -1259,13 +1132,8 @@ case "$os_id:${XDG_CURRENT_DESKTOP:-}" in
   *:*KDE*)   how='KDE: log out, then choose "i3" in the "Desktop Session" menu under the password box (older KDE login screens: the session menu at the bottom-left).' ;;
   *)         how='Log out and choose the "i3" session at your login screen (or put "exec i3" in ~/.xinitrc).' ;;
 esac
-[ "$BSD" -eq 1 ] || how="$how
+how="$how
        If i3 is not in the list, restart the computer once (the login screen looks for X11 when it starts)."
-case "$FAMILY" in
-  freebsd) how="Log out and pick \"i3\" at the login screen (GhostBSD: the session menu), or type startx on a console." ;;
-  openbsd) how="Log out: xenodm starts i3 through ~/.xsession (or type startx on a console)." ;;
-  netbsd)  how="Log out: xdm starts i3 through ~/.xsession (or type startx on a console). The bar is i3's own here: NetBSD has no polybar package." ;;
-esac
 cat <<MSG
 
 Done.  $how
@@ -1279,39 +1147,28 @@ Done.  $how
   - Your old desktop is untouched - pick it again at the login screen any time.
   - Undo the dotfiles:  ./install.sh --restore
   - Remove it all again (the config, and if you want i3 and the programs it added):  ./uninstall.sh  or  i3dots-uninstall
-  - Updates: after a system update (pacman -Syu / dnf upgrade / pkg upgrade) you get a notification when a newer
+  - Updates: after a system update (pacman -Syu / dnf upgrade / apt upgrade) you get a notification when a newer
     config is out on GitHub - nothing changes until you run:  i3dots-update   (keeps your Settings; files you edited
     by hand are replaced - undo: i3dots-update --undo)   No more checks: i3dots-update --off
 MSG
-if [ "$BSD" -eq 1 ]; then
-  cat <<MSG
-
-$SYSNAME notes: volume, brightness and battery use the system's own tools (mixer / sndioctl / mixerctl, backlight /
-xbacklight, acpi / apm / envstat). Power off and suspend from the power menu need permission: join the operator
-group (FreeBSD, NetBSD) or add a doas rule, e.g.  permit nopass :wheel cmd shutdown . The Sound, Bluetooth and Wi-Fi
-tabs of the settings window and the touchpad swipes use Linux-only tools; the bar's items and the keys work without.
-MSG
-fi
 # The login screen has to offer X11 sessions for i3. GNOME's GDM still does (Fedora 43-45, Ubuntu: GNOME itself is
 # Wayland-only now, other desktops' X11 sessions are not), and so do KDE's Plasma Login Manager (Fedora 44+), SDDM
 # and LightDM - unless X11 was switched off in GDM's settings, which hides i3 from the list.
-if [ "$BSD" -eq 0 ]; then
-  sysroot="${I3DOTS_TEST_ROOT:-}"
-  dm="$(readlink "$sysroot/etc/systemd/system/display-manager.service" 2>/dev/null)"; dm="${dm##*/}"; dm="${dm%.service}"
-  case "$dm" in
-    gdm|gdm3)
-      for f in "$sysroot/etc/gdm/custom.conf" "$sysroot/etc/gdm3/custom.conf" "$sysroot/etc/gdm3/daemon.conf"; do
-        [ -r "$f" ] || continue
-        if awk '/^[ \t]*\[/ { d = ($0 ~ /^[ \t]*\[daemon\][ \t]*$/) }
-                d && /^[ \t]*XorgEnable[ \t]*=[ \t]*(false|0)[ \t]*$/ { off = 1 }
-                END { exit !off }' "$f"; then
-          cat <<MSG
+sysroot="${I3DOTS_TEST_ROOT:-}"
+dm="$(readlink "$sysroot/etc/systemd/system/display-manager.service" 2>/dev/null)"; dm="${dm##*/}"; dm="${dm%.service}"
+case "$dm" in
+  gdm|gdm3)
+    for f in "$sysroot/etc/gdm/custom.conf" "$sysroot/etc/gdm3/custom.conf" "$sysroot/etc/gdm3/daemon.conf"; do
+      [ -r "$f" ] || continue
+      if awk '/^[ \t]*\[/ { d = ($0 ~ /^[ \t]*\[daemon\][ \t]*$/) }
+              d && /^[ \t]*XorgEnable[ \t]*=[ \t]*(false|0)[ \t]*$/ { off = 1 }
+              END { exit !off }' "$f"; then
+        cat <<MSG
 
 Login screen: GDM is set to hide X11 sessions (XorgEnable=false in ${f#"$sysroot"}), so "i3" will not be listed.
 Allow them again, then restart the computer:
-    sudo sed -i 's/^[ \t]*XorgEnable[ \t]*=.*/XorgEnable=true/' ${f#"$sysroot"}
+  sudo sed -i 's/^[ \t]*XorgEnable[ \t]*=.*/XorgEnable=true/' ${f#"$sysroot"}
 MSG
-        fi
-      done ;;
-  esac
-fi
+      fi
+    done ;;
+esac

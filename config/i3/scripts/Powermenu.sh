@@ -10,7 +10,7 @@ confirm() { [ "$(printf 'No\nYes' | rofi -dmenu -i -p "$1?" -config "$cfg" -them
 case "$choice" in
   *Lock)      "$s/LockScreen.sh" ;;
   *Logout)    confirm Logout    && i3-msg exit ;;
-  # (Platform.sh: systemd on Linux, shutdown / zzz / acpiconf on FreeBSD, OpenBSD, NetBSD)
+  # (Platform.sh: systemd)
   *Suspend)   "$s/Platform.sh" power suspend ;;
   *Hibernate) confirm Hibernate && "$s/Platform.sh" power hibernate ;;
   *Reboot)    confirm Reboot    && "$s/Platform.sh" power reboot ;;

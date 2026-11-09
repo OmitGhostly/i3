@@ -57,10 +57,6 @@ fi
 # Set the directory defaults for system sounds.
 if [ -d "/run/current-system/sw/share/sounds" ]; then
     systemDIR="/run/current-system/sw/share/sounds" # NixOS
-elif [ -d "/usr/local/share/sounds" ] && [ ! -d "/usr/share/sounds" ]; then
-    systemDIR="/usr/local/share/sounds"             # FreeBSD, GhostBSD, OpenBSD
-elif [ -d "/usr/pkg/share/sounds" ] && [ ! -d "/usr/share/sounds" ]; then
-    systemDIR="/usr/pkg/share/sounds"               # NetBSD
 else
     systemDIR="/usr/share/sounds"
 fi
@@ -93,7 +89,7 @@ play_sound() {
         aplay "$1" >/dev/null 2>&1 &
         exit 0
     fi
-    # (the BSDs: no PulseAudio / PipeWire / ALSA tools by default - mpv plays through the system's own sound)
+    # (no PulseAudio / PipeWire / ALSA tools: mpv plays it)
     if command -v mpv >/dev/null 2>&1; then
         mpv --no-video --really-quiet --no-terminal "$1" >/dev/null 2>&1 &
         exit 0
@@ -107,7 +103,7 @@ if [[ -n "$directSound" && -f "$directSound" ]]; then
     play_sound "$directSound"
 fi
 
-# The first file in a folder matching the sound's name pattern (find -quit is not on OpenBSD).
+# The first file in a folder matching the sound's name pattern.
 first_match() {
     local f
     # shellcheck disable=SC2206

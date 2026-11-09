@@ -26,30 +26,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/OmitGhostly/i3/main/install.
 
 The file manager is [yazi](https://yazi-rs.github.io), opened in the terminal; folders opened from other programs go there too. On Fedora it comes from the [lihaohong/yazi](https://copr.fedorainfracloud.org/coprs/lihaohong/yazi/) COPR, on Debian/Ubuntu from the Snap Store (or yazi's own release build), elsewhere from your repos. Thunar stays installed, and Settings > Keybindings switches between them.
 
-## Install on BSD
+## FreeBSD, GhostBSD, OpenBSD, NetBSD
 
-FreeBSD, GhostBSD, OpenBSD, NetBSD. First install bash and git:
-
-| System | Run |
-|---|---|
-| FreeBSD | `su root -c 'pkg install -y bash git'` |
-| GhostBSD | `sudo pkg install -y bash git` |
-| OpenBSD | `su root -c 'pkg_add bash git'` |
-| NetBSD | `su root -c 'pkgin -y install bash git'` |
-
-Then:
-
-```sh
-git clone https://github.com/OmitGhostly/i3.git
-cd i3
-./install.sh
-```
-
-NetBSD has no polybar package, so it uses i3's own bar. On a BSD the Settings window shows your network adapters and addresses and sets the proxy, while joining Wi-Fi, VPNs, sound and Bluetooth point to the system's own tools; there are no touchpad swipes. To shut down or sleep from the power menu, join the `operator` group (FreeBSD, NetBSD) or add a doas rule such as `permit nopass :wheel cmd shutdown`.
+They have their own version of these dots: [OmitGhostly/i3-bsd](https://github.com/OmitGhostly/i3-bsd). A BSD desktop installed from here earlier moves there by itself at its next `i3dots-update`.
 
 ## Updates
 
-After a system update (`pacman -Syu`, `dnf upgrade`, `apt upgrade`; on a BSD, cron looks every 30 minutes) you get a notification when a newer version of this config is on GitHub. Nothing changes until you install it:
+After a system update (`pacman -Syu`, `dnf upgrade`, `apt upgrade`) you get a notification when a newer version of this config is on GitHub. Nothing changes until you install it:
 
 ```bash
 i3dots-update

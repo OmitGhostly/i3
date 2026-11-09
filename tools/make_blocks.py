@@ -23,13 +23,6 @@ mods = [  # (module, [(format-name, format-string)], {extra key: value})
  ("gpu", [("format", " <label> ")], {}),
  ("date", [("format", " <label> ")], {"label-foreground": "fg"}),
  ("powermenu", [("format", " %{T2}󰐥%{T-} ")], {}),
- # FreeBSD / OpenBSD / NetBSD: the same items measured by Platform.sh (config.ini's *-sys modules), in their blocks
- ("network-sys", [("format", " <label> ")], {}),
- ("pulseaudio-sys", [("format", " <label> ")], {}),
- ("backlight-sys", [("format", " <label> ")], {}),
- ("battery-sys", [("format", " <label> ")], {}),
- ("cpu-sys", [("format", " <label> ")], {}),
- ("memory-sys", [("format", " <label> ")], {}),
 ]
 out = ["; The bar for every style except Flat (Settings > Appearance > Bar style). Each item's colours, end glyphs and",
        "; spacing come from style.ini [barstyle], which the settings window writes for the chosen style when the bar",
@@ -42,7 +35,7 @@ out = ["; The bar for every style except Flat (Settings > Appearance > Bar style
        "padding-right = 0",
        "font-2 = ${env:BAR_CAP_SPEC:FantasqueSansM Nerd Font Mono:size=27.277;5}",
        "modules-left = ${env:BAR_LEFT_B:b-i3}",
-       "modules-right = ${env:BAR_RIGHT_B:" + " ".join("b-" + m for m, _f, _e in mods if m != "playerctl" and not m.endswith("-sys")) + "}",
+       "modules-right = ${env:BAR_RIGHT_B:" + " ".join("b-" + m for m, _f, _e in mods if m != "playerctl") + "}",
        "",
        "; the workspaces, shaped like the items on the right: separate blocks, or (pill / dark pill / powerline) one",
        "; strip with the block ends on the outside (ws-start / ws-end) and the workspace you are on a block inside it.",
@@ -85,7 +78,7 @@ out = ["; The bar for every style except Flat (Settings > Appearance > Bar style
        "label = %output%",
        ""]
 for m, fmts, extra in mods:
-    k = "${barstyle.%s-%%s}" % m.replace("-sys", "")
+    k = "${barstyle.%s-%%s}" % m
     bg, fg = k % "bg", k % "fg"
     out.append("[module/b-%s]" % m)
     out.append("inherit = module/%s" % m)

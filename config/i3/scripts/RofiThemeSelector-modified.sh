@@ -9,7 +9,7 @@
 # as opposed to continous adding of //@theme
 # only one copy of this picker at a time (two would edit the same config file at once)
 # shellcheck disable=SC1091
-. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # flock, setsid, sed_inplace, pick_random everywhere
+. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # sed_inplace, pick_random
 exec 9>"${XDG_RUNTIME_DIR:-/tmp}/i3dots-$(id -u)-$(basename "$0").lock"
 flock -n 9 || exit 0
 

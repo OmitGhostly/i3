@@ -3,7 +3,7 @@
 # (or the first chosen one).
 # Position (top/bottom) and monitor choice come from the settings window (~/.config/i3/settings.json).
 # shellcheck disable=SC1091
-. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # flock, setsid, sed_inplace, pick_random everywhere
+. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # sed_inplace, pick_random
 exec 9>"${XDG_RUNTIME_DIR:-/tmp}/polybar-launch-$(id -u).lock"
 flock 9   # one launch at a time (the settings window and i3 may both ask)
 # stop the running bar(s). A bar that is still starting up can miss the first signal (two restarts in a row,
@@ -24,11 +24,6 @@ BAR_FONT_SPEC="$F:size=13.5;3"; BAR_ICON_SPEC="$F:size=16.5;4"; BAR_CAP_SPEC="$F
 BAR_LEFT="i3"; BAR_BATTERY=BAT0; BAR_ADAPTER=AC
 BAR_RIGHT="network bluetooth pulseaudio backlight caffeine nightlight battery cpu memory gpu date powermenu"
 BAR_RIGHT_B=""; BAR_LEFT_B=""
-# (FreeBSD / OpenBSD / NetBSD: polybar's own Wi-Fi, sound, battery, cpu and memory modules need Linux - see config.ini)
-case "$(uname -s)" in
-  Linux) ;;
-  *) BAR_RIGHT="network-sys pulseaudio-sys backlight-sys caffeine nightlight battery-sys cpu-sys memory-sys date powermenu" ;;
-esac
 # crisp text: grayscale anti-aliasing with light hinting (applies to programs started afterwards too)
 command -v xrdb >/dev/null 2>&1 && printf 'Xft.antialias: 1\nXft.hinting: 1\nXft.hintstyle: hintslight\nXft.rgba: none\n' | xrdb -merge 2>/dev/null
 # the saved choices (Settings > Appearance > Bar): position, size (the font lines, in exact whole pixels so the text
@@ -54,7 +49,7 @@ case "$BAR_NAME" in main|blocks) ;; *) BAR_NAME=blocks ;; esac
 python3 -c 'import json, socket, struct' >/dev/null 2>&1 || BAR_LEFT_B=$(printf '%s' "$BAR_LEFT_B" | sed 's/b-wsj/b-i3/')
 export BAR_BOTTOM BAR_HEIGHT BAR_FONT_SPEC BAR_ICON_SPEC BAR_CAP_SPEC BORDER_BOTTOM BORDER_TOP BAR_STYLE \
        BAR_LEFT BAR_LEFT_B BAR_RIGHT BAR_RIGHT_B BAR_BATTERY BAR_ADAPTER
-# No polybar (NetBSD has no package of it): i3's own bar takes its place. i3 reads its bar from its config, so the
+# No polybar: i3's own bar takes its place. i3 reads its bar from its config, so the
 # bar goes into bar-fallback.conf (the i3 config includes it) and i3 restarts in place once (windows stay where they
 # are; a reload would not start the bar - i3 starts i3bar only when it starts) - which runs this script again; it
 # then finds the bar in place and stops here. Where polybar is installed the file is emptied again the same way.
@@ -96,7 +91,7 @@ if ! command -v polybar >/dev/null 2>&1; then
   exit 0
 fi
 if grep -q '^bar' "$fallback" 2>/dev/null; then
-  printf "# i3's own bar goes here only when polybar is not installed (NetBSD has no package of it): polybar/launch.sh\n# writes it from the bar you chose in Settings > Appearance. With polybar this file stays like this.\n" >"$fallback" \
+  printf "# i3's own bar goes here only when polybar is not installed: polybar/launch.sh\n# writes it from the bar you chose in Settings > Appearance. With polybar this file stays like this.\n" >"$fallback" \
     && i3-msg -q restart >/dev/null 2>&1
 else
   i3_has_bar && bar_recheck_restart       # (i3's bar still up next to polybar)

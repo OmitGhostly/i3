@@ -2,9 +2,8 @@
 # Keep the desktop config (i3, bar, Settings window...) up to date with the GitHub repo.
 #
 # After a system update (sudo pacman -Syu on Arch, sudo dnf upgrade on Fedora, apt upgrade on Debian/Ubuntu) a
-# small system hook asks your session to CHECK for a newer version. FreeBSD / GhostBSD, OpenBSD and NetBSD have no
-# such hooks: there a line in your crontab checks every 30 minutes whether packages were installed or updated (pkg,
-# pkg_add, pkgin). The check fetches the newest version of the repo into a private copy
+# small system hook asks your session to CHECK for a newer version. The check fetches the newest version of the
+# repo into a private copy
 # (~/.local/share/i3wm-dots-updater/repo) and, when there is a newer one, shows a notification - once per new
 # version. Nothing is installed until you run "i3dots-update" yourself.
 # Installing re-installs the config files the quick way (install.sh --update: no packages, no password). What you
@@ -18,11 +17,10 @@
 #   i3dots-update --undo          go back to the config from before the last update
 #   i3dots-update --off / --on    turn the checks after system updates off / on again
 #   i3dots-update --status        show the settings and the last update
-#   i3dots-update --install-hook  set up the pacman / dnf / apt hook (asks for your password once); on the BSDs the
-#                                 crontab line (no password)
+#   i3dots-update --install-hook  set up the pacman / dnf / apt hook (asks for your password once)
 #   i3dots-update --remove-hook   take it away again
-#   (--auto, --login and --cron are what the hook, i3 and cron use)
-# flock, setsid, sed_inplace, pick_random everywhere: the copy next to this script (also when it runs from a
+#   (--auto and --login are what the hook and i3 use)
+# sed_inplace, pick_random: the copy next to this script (also when it runs from a
 # repository folder), else the installed one (when started through the i3dots-update link)
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/compat.sh" 2>/dev/null || . "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"
@@ -45,27 +43,11 @@ apt_hook="$root/etc/apt/apt.conf.d/99i3wm-dots"
 
 mode="${1:-now}"
 quiet=0
-case "$mode" in --auto|--login|--cron) quiet=1 ;; esac
-case "$(uname -s)" in FreeBSD|OpenBSD|NetBSD) bsd=1 ;; *) bsd=0 ;; esac
-cron_mark="# i3wm-dots: update the desktop config after a system update"
+case "$mode" in --auto|--login) quiet=1 ;; esac
 
-# the BSDs: the package database, which changes whenever packages are installed or updated
-pkg_db() {
-  local d
-  for d in "$root/var/db/pkg/local.sqlite" "$root/usr/pkg/pkgdb" "$root/var/db/pkg"; do
-    [ -e "$d" ] && { printf '%s\n' "$d"; return 0; }
-  done
-  return 1
-}
-# packages changed since the last check? (Linux: the hook's time stamp; the BSDs: the package database)
+# packages changed since the last check? (the time stamp the system hook writes)
 system_updated() {
-  local sys last db
-  if [ "$bsd" -eq 1 ]; then
-    db="$(pkg_db)" || return 1
-    [ -f "$state/last-run" ] || return 0
-    [ -n "$(find "$db" -prune -newer "$state/last-run" 2>/dev/null)" ]
-    return
-  fi
+  local sys last
   sys="$(cat "$sys_stamp" 2>/dev/null)"; last="$(cat "$state/last-run" 2>/dev/null)"
   case "$sys" in ''|*[!0-9]*) return 1 ;; esac
   case "$last" in ''|*[!0-9]*) last=0 ;; esac
@@ -74,7 +56,7 @@ system_updated() {
 
 say() { if [ "$quiet" -eq 1 ]; then printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$log"; else printf '%s\n' "$*"; fi; }
 # note [notify-send options] TITLE TEXT: a desktop notification; fails when none could be shown (no notification
-# daemon, or cron on the BSDs without the session's D-Bus address - the login run saves it in $state/session)
+# daemon). Without a D-Bus address of its own it uses the one the login run saved in $state/session.
 note() {
   command -v notify-send >/dev/null 2>&1 || return 1
   if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -r "$state/session" ]; then
@@ -140,25 +122,7 @@ exit 0
 EOF
 }
 
-install_cron() {
-  command -v crontab >/dev/null 2>&1 || { echo "no crontab command: updates then only run when you type i3dots-update" >&2; return 1; }
-  local cur
-  cur="$(crontab -l 2>/dev/null | grep -vF "$cron_mark")"
-  { [ -n "$cur" ] && printf '%s\n' "$cur"; printf '*/30 * * * * "%s" --cron >/dev/null 2>&1 %s\n' "$cfg/i3/scripts/Update.sh" "$cron_mark"; } | crontab - \
-    || { echo "could not change your crontab" >&2; return 1; }
-  echo "Done: every 30 minutes cron checks whether packages were installed or updated, and then updates the desktop config."
-}
-
-remove_cron() {
-  command -v crontab >/dev/null 2>&1 || return 0
-  crontab -l 2>/dev/null | grep -qF "$cron_mark" || return 0
-  local rest
-  rest="$(crontab -l 2>/dev/null | grep -vF "$cron_mark")"
-  if [ -n "$rest" ]; then printf '%s\n' "$rest" | crontab -; else crontab -r 2>/dev/null || printf '' | crontab -; fi
-}
-
 install_hook() {
-  [ "$bsd" -eq 1 ] && { install_cron; return $?; }
   local me found=0
   me="$(id -un)"
   echo "Setting up the system hook (asks for your password once)..."
@@ -215,11 +179,6 @@ EOF
 }
 
 remove_hook() {
-  if [ "$bsd" -eq 1 ]; then
-    remove_cron
-    echo "Your desktop config is no longer updated after system updates (i3dots-update still works by hand)."
-    return 0
-  fi
   local me rest
   me="$(id -un)"
   if [ -f "$users_file" ]; then
@@ -251,7 +210,7 @@ fetch() {   # bring the private copy of the repo up to date; prints the newest c
 
 reload_desktop() {
   command -v i3-msg >/dev/null 2>&1 || return 0
-  # (from cron there is no display to find i3 by: its socket is in /tmp/i3-USER.*/ or $XDG_RUNTIME_DIR/i3/)
+  # (started by the system hook there is no display to find i3 by: its socket is in /tmp/i3-USER.*/ or $XDG_RUNTIME_DIR/i3/)
   if [ -z "${I3SOCK:-}" ] && [ -z "${DISPLAY:-}" ]; then
     I3SOCK="$(ls -t /tmp/i3-"$(id -un)".*/ipc-socket.* "${XDG_RUNTIME_DIR:-/nonexistent}"/i3/ipc-socket.* 2>/dev/null | head -n1)"
     [ -n "$I3SOCK" ] || return 0
@@ -260,12 +219,20 @@ reload_desktop() {
   i3-msg -q reload >/dev/null 2>&1 || true   # (also restarts the bar)
 }
 
+# A desktop that has just moved between the Linux and the BSD version of these dots (their installers hand over to
+# each other): the version it got there is the one installed now
+take_handoff() {
+  [ -s "$state/handoff" ] || return 0
+  mv -f "$state/handoff" "$state/applied" 2>/dev/null || true
+}
+
 update() {
   if [ ! -f "$cfg/i3/.i3wm-dots-installed" ]; then
     say "the i3 config in $cfg/i3 was not installed by i3wm-dots - nothing to update"
     return 0
   fi
   local new old subject
+  take_handoff
   new="$(fetch)" || return 1
   old="$(cat "$state/applied" 2>/dev/null)"
   if [ -n "$new" ] && [ "$new" = "$old" ]; then
@@ -328,6 +295,7 @@ check() {
     return 0
   fi
   local new
+  take_handoff
   new="$(fetch)" || return 1
   date +%s >"$state/last-run"
   if [ -z "$new" ] || [ "$new" = "$(cat "$state/applied" 2>/dev/null)" ]; then
@@ -340,7 +308,7 @@ check() {
   tell_available
 }
 
-# (the login run: the session's D-Bus address, so the BSDs' cron check can show its notification)
+# (the login run: the session's D-Bus address, for a check started without one to show its notification)
 remember_session() {
   [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] || return 0
   printf '%s\n' "$DBUS_SESSION_BUS_ADDRESS" >"$state/session.tmp" 2>/dev/null && mv -f "$state/session.tmp" "$state/session"
@@ -369,22 +337,20 @@ case "$mode" in
   --off)    : >"$state/off"; echo "no more checks after system updates (i3dots-update still updates by hand)"; exit 0 ;;
   --on)     rm -f "$state/off"; echo "after a system update you get a notification when a newer version is out"; exit 0 ;;
   --status)
+    take_handoff
     echo "checks after system updates: $(auto_on && echo "on (a notification when a newer version is out; installing is up to you)" || echo off)"
     echo "repo:              $(repo_url)"
     a="$(cat "$state/applied" 2>/dev/null)"; echo "installed version: ${a:0:7}${a:+ }$( [ -n "$a" ] && git -C "$repo" log -1 --format='(%cd) %s' --date=short "$a" 2>/dev/null)"
     n="$(cat "$state/available" 2>/dev/null)"
     [ -n "$n" ] && [ "$n" != "$a" ] && echo "newer version:     ${n:0:7} $(git -C "$repo" log -1 --format='(%cd) %s' --date=short "$n" 2>/dev/null) - install it with: i3dots-update"
-    # (GNU date -d @SECONDS, BSD date -r SECONDS)
     t="$(cat "$state/last-run" 2>/dev/null)"
-    [ -n "$t" ] && echo "last check:        $(date -d "@$t" '+%F %H:%M' 2>/dev/null || date -r "$t" '+%F %H:%M' 2>/dev/null)"
-    if [ "$bsd" -eq 1 ]; then
-      if crontab -l 2>/dev/null | grep -qF "$cron_mark"; then echo "after system updates: on (cron checks every 30 minutes)"
-      else echo "after system updates: off (run: i3dots-update --install-hook)"; fi
-    elif [ -x "$hook_bin" ] && grep -qxF "$(id -un)" "$users_file" 2>/dev/null; then echo "system hook:       set up"
+    [ -n "$t" ] && echo "last check:        $(date -d "@$t" '+%F %H:%M' 2>/dev/null)"
+    if [ -x "$hook_bin" ] && grep -qxF "$(id -un)" "$users_file" 2>/dev/null; then echo "system hook:       set up"
     else echo "system hook:       not set up (run: i3dots-update --install-hook)"; fi
     exit 0 ;;
   --check)
     flock -w 300 9 || exit 1
+    take_handoff
     new="$(fetch)" || exit 1
     if [ "$new" = "$(cat "$state/applied" 2>/dev/null)" ]; then echo "up to date (${new:0:7})"
     else echo "a newer version is available: ${new:0:7} $(git -C "$repo" log -1 --format=%s FETCH_HEAD 2>/dev/null)"; fi
@@ -406,15 +372,9 @@ case "$mode" in
     sleep "${I3DOTS_LOGIN_DELAY:-20}"  # let the network and the notification service come up first
     flock -n 9 || exit 0
     "$todo"; exit $? ;;
-  --cron)
-    # the BSDs: cron asks every 30 minutes; only a system update (a changed package database) leads to a check
-    auto_on || exit 0
-    system_updated || exit 0
-    flock -n 9 || exit 0
-    check; exit $? ;;
   now|--now)
     flock -w 300 9 || { echo "another update is running"; exit 1; }
     update; exit $? ;;
-  -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "unknown option: $mode (try --help)" >&2; exit 2 ;;
 esac

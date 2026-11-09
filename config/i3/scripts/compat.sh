@@ -1,22 +1,7 @@
-# Sourced by the scripts (". .../compat.sh"): stand-ins for the commands Linux has and FreeBSD (GhostBSD), OpenBSD
-# and NetBSD do not, so one script runs everywhere. On Linux every real command is used as it is.
+# Sourced by the scripts (". .../compat.sh"): small helpers they share.
 
-# flock: FreeBSD and OpenBSD have none - FdLock.py takes the same lock (no python either: carry on without a lock)
-if ! command -v flock >/dev/null 2>&1; then
-  flock() {
-    if command -v python3 >/dev/null 2>&1; then
-      python3 "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/FdLock.py" "$@"
-    else
-      return 0
-    fi
-  }
-fi
-
-# setsid: only Linux has it; started with "&" the program carries on after the script anyway
-command -v setsid >/dev/null 2>&1 || setsid() { "$@"; }
-
-# sed_inplace SED-ARGUMENTS... FILE: edit a file in place with any sed (GNU sed -i, BSD sed -i '', ...), keeping the
-# file itself (its permissions, a symlink to it). Fails, and leaves the file alone, if sed fails.
+# sed_inplace SED-ARGUMENTS... FILE: edit a file in place, keeping the file itself (its permissions, a symlink to
+# it). Fails, and leaves the file alone, if sed fails.
 sed_inplace() {
   _f=$(eval "printf '%s' \"\${$#}\"")
   _n=$(($# - 1))
@@ -32,5 +17,5 @@ sed_inplace() {
   fi
 }
 
-# pick_random: one line of standard input at random (shuf -n1 is GNU only)
+# pick_random: one line of standard input at random
 pick_random() { awk -v s="$$" 'BEGIN { srand(); t = srand(); srand(s + t) } { a[NR] = $0 } END { if (NR) print a[int(rand() * NR) + 1] }'; }

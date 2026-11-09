@@ -3,7 +3,7 @@
 # to use (Settings > Mouse > Mouse cursor writes its file), so the pointer looks the same over every window.
 # i3 runs this at login; the settings window runs it after a change (it makes a running copy re-read its file).
 # shellcheck disable=SC1091
-. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # flock, setsid, sed_inplace, pick_random everywhere
+. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # sed_inplace, pick_random
 command -v xsettingsd >/dev/null 2>&1 || exit 0
 conf="${XDG_CONFIG_HOME:-$HOME/.config}/xsettingsd/xsettingsd.conf"
 [ -f "$conf" ] || exit 0                       # no cursor chosen yet: GTK uses its settings.ini

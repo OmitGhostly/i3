@@ -7,11 +7,11 @@
 # ==================================================
 
 # Dependencies: bash, coreutils (mkdir/mktemp/mv/touch/sort/cut), sed, awk,
-#   pgrep/pkill, flock (compat.sh stands in for it on FreeBSD / OpenBSD), rofi, wl-clipboard (xclip -selection clipboard)
+#   pgrep/pkill, flock, rofi, wl-clipboard (xclip -selection clipboard)
 
 # Variables
 # shellcheck disable=SC1091
-. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # flock, setsid, sed_inplace, pick_random everywhere
+. "${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/compat.sh"   # sed_inplace, pick_random
 rofi_theme="${XDG_CONFIG_HOME:-$HOME/.config}/i3/rofi/config-emoji.rasi"
 msg='** note ** 👀 Click or Return to choose || Ctrl V to Paste'
 usage_file="${XDG_STATE_HOME:-$HOME/.local/state}/rofi-emoji/usage"
