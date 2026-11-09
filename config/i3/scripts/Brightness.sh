@@ -5,16 +5,48 @@
 #  License: GNU GPLv3
 #  SPDX-License-Identifier: GPL-3.0-or-later
 # ==================================================
-# Script for Monitor backlights (if supported), through Platform.sh: brightnessctl (Linux), FreeBSD's backlight,
-# xbacklight (screens RandR can dim: OpenBSD, NetBSD, ...)
+# Screen brightness. A backlight (laptops) through Platform.sh: brightnessctl (Linux), FreeBSD's backlight,
+# xbacklight (screens RandR can dim: OpenBSD, NetBSD, ...), OpenBSD's wsconsctl.
+# Screens without one - most desktop monitors - get their picture dimmed instead (software brightness: the colour
+# ramp, through redshift together with the night light, see Nightlight.sh). It is saved, and put back at login.
+#   Brightness.sh --inc | --dec    10% brighter / darker, with a notification (the brightness keys, the bar)
+#   Brightness.sh --set N          N% (5 to 100), without a notification (the slider in Settings > Displays)
+#   Brightness.sh --get            the brightness now, in %
+#   Brightness.sh --kind           backlight | software
 
 iDIR="${XDG_CONFIG_HOME:-$HOME/.config}/i3/icons"
 step=10  # INCREASE/DECREASE BY THIS VALUE
+P="${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/Platform.sh"
+N="${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/Nightlight.sh"
+soft="${XDG_STATE_HOME:-$HOME/.local/state}/i3wm-dots/brightness"
+
+kind() { if "$P" has backlight; then echo backlight; else echo software; fi; }
 
 # Get current brightness as an integer (without %)
-P="${XDG_CONFIG_HOME:-$HOME/.config}/i3/scripts/Platform.sh"
 get_brightness() {
-    "$P" brightness get
+    local b
+    if [ "$(kind)" = backlight ]; then
+        "$P" brightness get
+    else
+        b="$(cat "$soft" 2>/dev/null)"
+        case "$b" in ''|*[!0-9]*) b=100 ;; esac
+        echo "$b"
+    fi
+}
+
+# set_brightness N: clamped to 5-100 (never fully dark)
+set_brightness() {
+    local new=$1
+    case "$new" in ''|*[!0-9]*) return 1 ;; esac
+    (( new < 5 )) && new=5
+    (( new > 100 )) && new=100
+    if [ "$(kind)" = backlight ]; then
+        "$P" brightness set "$new"
+    else
+        mkdir -p "$(dirname "$soft")" && printf '%s\n' "$new" > "$soft.tmp" && mv -f "$soft.tmp" "$soft"
+        "$N" apply
+    fi
+    echo "$new"
 }
 
 # Determine the icon based on brightness level
@@ -50,13 +82,7 @@ change_brightness() {
         notify-send -e -u low "Screen" "This screen's brightness cannot be changed from here" 2>/dev/null
         return 1
     fi
-    new=$((current + delta))
-
-    # Clamp between 5 and 100
-    (( new < 5 )) && new=5
-    (( new > 100 )) && new=100
-
-    "$P" brightness set "$new"
+    new=$(set_brightness "$((current + delta))") || return 1
 
     icon=$(get_icon_path "$new")
     send_notification "$new" "$icon"
@@ -66,6 +92,12 @@ change_brightness() {
 case "$1" in
     "--get")
         get_brightness
+        ;;
+    "--set")
+        set_brightness "${2:-}" >/dev/null
+        ;;
+    "--kind")
+        kind
         ;;
     "--inc")
         change_brightness "$step"

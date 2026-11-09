@@ -3638,7 +3638,7 @@ SIDEBAR = (("network", "Network", "\U000F05A9", "network wifi wi-fi wireless int
            ("bluetooth", "Bluetooth", "\U000F00AF", "bluetooth pair headphones earbuds speaker devices", 0),
            ("sound", "Sound", "\U000F057E", "sound volume audio speakers headphones microphone mic output input", 0),
            ("displays", "Displays", "\U000F0379", "displays monitors screens resolution refresh rate rotate rotation "
-                                                    "scale arrange primary", 1),
+                                                    "scale arrange primary brightness backlight dim", 1),
            ("appearance", "Appearance", "\U000F056E", "appearance bar opacity transparency gaps tiling spiral blur "
                                                         "workspaces position size style", 1),
            ("colors", "Colors", "\U000F03D8", "colors colours accent", 1),
@@ -4450,6 +4450,84 @@ def launch_gui(confirm=True, tab=None):
         stack.set_visible_child_name(ui["sel"])
     mon.pack_start(dim("After applying, you get 10 seconds to confirm - if the screen goes dark, "
                        "just wait and it reverts."), False, False, 0)
+
+    # brightness: changes right away (not part of Apply), through Brightness.sh like the brightness keys - the
+    # backlight, or on screens without one the picture is dimmed instead
+    import threading as _bthreads
+    bright_sh = os.path.join(SCRIPTS_DIR, "Brightness.sh")
+    bri = {"loading": True, "pending": None, "timer": None, "busy": False}
+    bt = Gtk.Label(label="Brightness", xalign=0)
+    bt.get_style_context().add_class("title")
+    bri_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 5, 100, 1)
+    bri_scale.set_digits(0)
+    bri_scale.set_value_pos(Gtk.PositionType.RIGHT)
+    bri_scale.connect("format-value", lambda _s, v: "%d%%" % v)
+    bri_scale.set_sensitive(False)                 # (until the brightness now has been read)
+    guard_scroll(bri_scale)
+    bri_note = dim("")
+    mon.pack_start(bt, False, False, 0)
+    bri_row = row("Screens", bri_scale)
+    mon.pack_start(bri_row, False, False, 0)
+    mon.pack_start(bri_note, False, False, 0)
+
+    def bri_worker(v):
+        run([bright_sh, "--set", str(v)])
+        GLib.idle_add(bri_done)
+
+    def bri_done():
+        bri["busy"] = False
+        if bri["pending"] is not None and bri["timer"] is None:
+            bri["timer"] = GLib.timeout_add(10, bri_flush)
+        return False
+
+    def bri_flush():
+        """Send only the latest value (every 90 ms at most, one at a time) while the slider is dragged."""
+        bri["timer"] = None
+        if bri["busy"] or bri["pending"] is None:
+            return False
+        v, bri["pending"] = bri["pending"], None
+        bri["busy"] = True
+        _bthreads.Thread(target=bri_worker, args=(v,), daemon=True).start()
+        return False
+
+    def bri_changed(w):
+        if bri["loading"]:
+            return
+        bri["pending"] = int(round(w.get_value()))
+        if bri["timer"] is None:
+            bri["timer"] = GLib.timeout_add(90, bri_flush)
+    bri_scale.connect("value-changed", bri_changed)
+
+    def bri_show(kind, val):
+        bri["loading"] = True
+        try:
+            v = int(float(val))
+        except ValueError:
+            v = 100
+        bri_scale.set_value(max(5, min(100, v)))
+        bri_row.get_children()[0].set_text("Built-in screen" if kind == "backlight" else "All screens")
+        if kind == "backlight":
+            bri_note.set_text("The screen's backlight, the same as the brightness keys. It changes right away.")
+        else:
+            bri_note.set_text("Your screens have no backlight this computer can control (most desktop monitors "
+                              "don't), so this dims the picture instead. It works together with the night light, "
+                              "is kept, and comes back when you log in. The monitor's own buttons still set its "
+                              "real brightness.")
+        bri_scale.set_sensitive(True)
+        bri["loading"] = False
+        return False
+
+    def bri_load(*_a):
+        if bri["busy"] or bri["pending"] is not None:      # (it is being moved right now)
+            return
+
+        def work():
+            k = query([bright_sh, "--kind"]).strip()
+            v = query([bright_sh, "--get"]).strip()
+            GLib.idle_add(bri_show, k, v)
+        _bthreads.Thread(target=work, daemon=True).start()
+    bri_load()
+    mon.connect("map", bri_load)          # (back on this tab: the brightness keys may have changed it)
     add_page("displays", scrolled(mon))
 
     # ---------------- appearance tab

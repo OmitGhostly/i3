@@ -1,6 +1,6 @@
 # i3
 
-Monochrome i3 desktop, with a Settings window (`SUPER + ALT + M`) for network (Wi-Fi, Ethernet, IP and DNS, VPN, proxy), Bluetooth, sound, displays, the look and the keys. The cursor is [Capitaine Cursors](assets/cursors).
+Monochrome i3 desktop, with a Settings window (`SUPER + ALT + M`) for network (Wi-Fi, Ethernet, IP and DNS, VPN, proxy), Bluetooth, sound, displays and brightness, the look and the keys. The cursor is [Capitaine Cursors](assets/cursors).
 
 ![desktop](docs/preview.png)
 
@@ -109,7 +109,7 @@ What you set in the Settings window is kept. Files you edited by hand in `~/.con
 | `SUPER + ALT + R` | Refresh bar, colors, menus |
 | `SUPER + SHIFT + Enter` | Drop-down terminal |
 | `SUPER + ALT + D` | Display layout tool (arandr) |
-| `SUPER + ALT + M` | Settings window (network: Wi-Fi, Ethernet, IP and DNS, VPN, proxy; Bluetooth, sound, displays, appearance, colors, themes, mouse and cursor, keybinds) |
+| `SUPER + ALT + M` | Settings window (network: Wi-Fi, Ethernet, IP and DNS, VPN, proxy; Bluetooth, sound, displays and brightness, appearance, colors, themes, mouse and cursor, keybinds) |
 
 ### Look
 
