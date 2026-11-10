@@ -218,6 +218,8 @@ config_step() {
     command -v systemctl >/dev/null 2>&1 && [ "$dry" -eq 0 ] && systemctl --user daemon-reload >/dev/null 2>&1
     gone "the update checks (i3dots-update)"
   fi
+  # the wallpaper slideshow (Settings > Wallpaper), if it runs
+  [ "$dry" -eq 0 ] && [ -x "$cfg/i3/scripts/WallCycle.sh" ] && bash "$cfg/i3/scripts/WallCycle.sh" --stop >/dev/null 2>&1
 
   # the config folders the installer made; your originals come back from the newest *.bak-*.
   # Ours is first moved aside as .i3dots-removing-NAME, then your backup goes in its place, then the aside copy is

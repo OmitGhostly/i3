@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """i3wm-dots settings window: network (Wi-Fi, Ethernet, IP and DNS, VPN, proxy), Bluetooth, sound, displays
 (resolution, refresh rate, orientation, scale, layout), appearance (window/terminal opacity, gaps, tiling, bar),
-accent colour, terminal themes, mouse (touchpad gestures, cursor) and keybindings.
+accent colour, wallpaper (and a slideshow), terminal themes, mouse (touchpad gestures, cursor) and keybindings.
 
   SettingsGUI.py            open the settings window
   SettingsGUI.py --bar-env  print the saved bar settings as shell variables and write polybar/style.ini
@@ -15,7 +15,7 @@ accent colour, terminal themes, mouse (touchpad gestures, cursor) and keybinding
   SettingsGUI.py --dry-run  with --apply: print the commands instead of running them
   SettingsGUI.py --i3bar-conf  print i3's own bar for the chosen bar (used where polybar is not installed)
   SettingsGUI.py --tab NAME open on a page: network (or wifi ethernet vpn proxy) bluetooth sound displays
-                            appearance colors themes mouse keybindings
+                            appearance colors wallpaper themes mouse keybindings
 
 Changes are saved to ~/.config/i3/settings.json and applied immediately.
 No root needed.  Requires: python3, python3-gobject (GTK 3), xinput, xrandr (pactl / bluetoothctl / nmcli for those tabs).
@@ -2592,6 +2592,71 @@ def apply_sound(settings):
         _write_if_changed(SOUNDS_CONF, text)
 
 
+# ------------------------------------------------------------------ wallpaper slideshow (WallCycle.sh)
+WALL_DIR = os.environ.get("WALL_DIR") or os.path.expanduser("~/Pictures/wallpapers")
+WALL_STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "i3wm-dots")
+WALLCYCLE_CONF = os.path.join(WALL_STATE, "wallcycle.conf")
+WALL_EXT = (".jpg", ".jpeg", ".png", ".webp")
+# how often the slideshow changes the picture: seconds (0 = once at every login), or "custom" (minutes you type)
+WALL_INTERVALS = [(60, "1 minute"), (120, "2 minutes"), (300, "5 minutes"), (600, "10 minutes"),
+                  (900, "15 minutes"), (1800, "30 minutes"), (3600, "1 hour"), (7200, "2 hours"),
+                  (18000, "5 hours"), (43200, "12 hours"), (86400, "1 day"), (604800, "1 week"),
+                  (0, "At every login (each restart)")]
+WALLCYCLE_DEFAULT = {"enabled": False, "folder": WALL_DIR, "interval": 600, "order": "random"}
+
+
+def wallcycle_choice(settings):
+    """The saved slideshow choice, checked: {enabled, folder, interval (seconds, 0 = at login), order}."""
+    c = dict(WALLCYCLE_DEFAULT)
+    w = settings.get("wallpaper") if isinstance(settings.get("wallpaper"), dict) else {}
+    c["enabled"] = w.get("enabled") is True
+    f = w.get("folder")
+    if isinstance(f, str) and f.strip() and "\n" not in f:
+        c["folder"] = os.path.expanduser(f.strip())
+    i = w.get("interval")
+    if isinstance(i, int) and not isinstance(i, bool) and (i == 0 or 10 <= i <= 31 * 86400):
+        c["interval"] = i
+    c["order"] = "name" if w.get("order") == "name" else "random"
+    return c
+
+
+def wall_pictures(folder, limit=2000):
+    """The pictures in a folder (and its folders, three deep), sorted by name."""
+    out = []
+    folder = os.path.expanduser(folder or "")
+    if not os.path.isdir(folder):
+        return out
+    base = folder.rstrip(os.sep).count(os.sep)
+    for d, dirs, files in os.walk(folder, followlinks=True):
+        if d.count(os.sep) - base >= 3:
+            dirs[:] = []
+        dirs.sort()
+        for f in sorted(files):
+            if f.lower().endswith(WALL_EXT) and os.path.isfile(os.path.join(d, f)):
+                out.append(os.path.join(d, f))
+                if len(out) >= limit:
+                    return sorted(out)
+    return sorted(out)
+
+
+def current_wallpaper():
+    """The wallpaper showing now (Wallpaper.sh remembers it), or None."""
+    try:
+        with open(os.path.join(WALL_STATE, "wallpaper")) as f:
+            p = f.readline().strip()
+        return p if p and os.path.isfile(p) else None
+    except OSError:
+        return None
+
+
+def apply_wallcycle(settings):
+    """Write the slideshow choice for WallCycle.sh (it starts at login; the window restarts it on Apply)."""
+    c = wallcycle_choice(settings)
+    _write_if_changed(WALLCYCLE_CONF, "# Written by the Settings window (Wallpaper tab). Read by scripts/WallCycle.sh.\n"
+                      "enabled=%d\nfolder=%s\ninterval=%d\norder=%s\n"
+                      % (1 if c["enabled"] else 0, c["folder"], c["interval"], c["order"]))
+
+
 # ------------------------------------------------------------------ bluetooth (bluetoothctl / BlueZ)
 BT_MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\Z")
 BT_HINT = ("Bluetooth is not set up on this computer. Install the BlueZ tools and start the service:\n"
@@ -3524,7 +3589,7 @@ def refresh_files(settings):
 def apply_all(settings):
     """Apply every saved setting. One failing step is reported but never stops the others."""
     for step in (apply_mouse, apply_cursor, apply_monitors, apply_opacity, apply_themes, apply_terminal_font, apply_colors,
-                 apply_gaps, apply_apps, apply_sound, apply_gestures, apply_bar_blur):
+                 apply_gaps, apply_apps, apply_sound, apply_gestures, apply_bar_blur, apply_wallcycle):
         try:
             step(settings)
         except Exception as e:  # noqa: BLE001 - login must not break on a bad setting
@@ -3536,8 +3601,8 @@ def apply_all(settings):
 
 
 # ------------------------------------------------------------------ one settings window at a time
-TAB_NAMES = ("mouse", "displays", "appearance", "colors", "themes", "keybindings", "sound", "bluetooth", "network",
-             "wifi", "ethernet", "vpn", "proxy")
+TAB_NAMES = ("mouse", "displays", "appearance", "colors", "themes", "wallpaper", "keybindings", "sound", "bluetooth",
+             "network", "wifi", "ethernet", "vpn", "proxy")
 NET_PARTS = ("wifi", "ethernet", "vpn", "proxy")     # (parts of the Network page: --tab wifi opens it on Wi-Fi)
 # the list on the left: (page, name, icon (Nerd Font), words the search finds it by, group)
 SIDEBAR = (("network", "Network", "\U000F05A9", "network wifi wi-fi wireless internet ethernet lan wired cable ip "
@@ -3549,6 +3614,8 @@ SIDEBAR = (("network", "Network", "\U000F05A9", "network wifi wi-fi wireless int
            ("appearance", "Appearance", "\U000F056E", "appearance bar opacity transparency gaps tiling spiral blur "
                                                         "workspaces position size style", 1),
            ("colors", "Colors", "\U000F03D8", "colors colours accent", 1),
+           ("wallpaper", "Wallpaper", "\U000F02E9", "wallpaper background picture photo image slideshow cycle "
+                                                      "change rotate folder", 1),
            ("themes", "Themes", "\U000F018D", "themes terminal ghostty kitty font text size colours", 1),
            ("mouse", "Mouse", "\U000F037D", "mouse touchpad trackpad pointer speed acceleration cursor gestures "
                                               "swipe", 2),
@@ -3723,6 +3790,12 @@ frame > label { color: @A@; font-weight: bold; }
 .mon-off .mon-num { font-size: 14pt; }
 .mon-off.mon-sel { border: 2px solid @A@; }
 .mon-off.mon-sel label { color: @A@; }
+/* the Wallpaper tab */
+button.wall { padding: 3px; border-radius: 10px; border: 2px solid #1f1f1f; background-color: #0a0a0a; }
+button.wall image { -gtk-icon-shadow: none; }   /* (the theme's 1px light shadow under a button's picture) */
+button.wall:hover { border-color: #6e6e6e; }
+button.wall-on, button.wall-on:hover { border-color: @A@; }
+.wall-now { border: 1px solid #1f1f1f; border-radius: 10px; }
 .ident { font-size: 72pt; font-weight: bold; color: #000000; background-color: @A@; padding: 10px 40px;
          border-radius: 16px; }
 """
@@ -6347,6 +6420,239 @@ def launch_gui(confirm=True, tab=None):
     set_accent(acc["v"])
     add_page("colors", scrolled(cp))
 
+    # ---------------- wallpaper tab: pick one (like SUPER+W), or let a folder of pictures cycle
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+    import threading as _wthreads
+    wlp = page()
+    wtitle = Gtk.Label(label="Wallpaper", xalign=0)
+    wtitle.get_style_context().add_class("title")
+    wlp.pack_start(wtitle, False, False, 0)
+
+    def wall_thumb(path, w, h):
+        """A picture filling w x h, cut to fit like the wallpaper on the screen (None if it cannot be read)."""
+        try:
+            _fmt, pw, ph = GdkPixbuf.Pixbuf.get_file_info(path)
+            if not pw or not ph:
+                return None
+            k = max(w / pw, h / ph)
+            # (2 pixels to spare: the scaled JPEG loader can leave its last row unfinished - a light line)
+            sw_, sh_ = max(w, int(math.ceil(pw * k))) + 2, max(h, int(math.ceil(ph * k))) + 2
+            pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, sw_, sh_, False)
+            return pb.new_subpixbuf((pb.get_width() - w) // 2, (pb.get_height() - h) // 2, w, h).copy()
+        except Exception:  # noqa: BLE001 - a broken or odd file just gets no thumbnail
+            return None
+
+    now_img = Gtk.Image()
+    now_img.get_style_context().add_class("wall-now")
+    now_name = dim("")
+    now_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    now_box.set_halign(Gtk.Align.START)
+    now_box.pack_start(now_img, False, False, 0)
+    now_box.pack_start(now_name, False, False, 0)
+    wlp.pack_start(row("Showing now", now_box), False, False, 0)
+    wall_buttons = {}                                   # picture -> its button in the grid
+    wall_now = {"p": current_wallpaper()}
+
+    def show_now(path):
+        wall_now["p"] = path
+        for p_, b_ in wall_buttons.items():
+            (b_.get_style_context().add_class if p_ == path else b_.get_style_context().remove_class)("wall-on")
+        if not path:
+            now_img.clear()
+            now_name.set_text("No wallpaper picked yet.")
+            return
+        now_name.set_text(path.replace(os.path.expanduser("~"), "~"))
+
+        def load():
+            pb = wall_thumb(path, 320, 180)
+            GLib.idle_add(lambda: (now_img.set_from_pixbuf(pb) if pb and wall_now["p"] == path else None) and False)
+        _wthreads.Thread(target=load, daemon=True).start()
+
+    def set_wallpaper(path):
+        """Use a picture now, the same way SUPER+W does (Wallpaper.sh remembers it for the next login)."""
+        if DRY:
+            print("+ Wallpaper.sh --set", path)
+        else:
+            subprocess.Popen([os.path.join(SCRIPTS_DIR, "Wallpaper.sh"), "--set", path],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        show_now(path)
+        status.set_text("Wallpaper: %s" % os.path.basename(path))
+
+    # the pictures of a folder, as a grid: a click uses one right away
+    pick_t = Gtk.Label(label="Pick a wallpaper", xalign=0)
+    pick_t.get_style_context().add_class("title")
+    wlp.pack_start(pick_t, False, False, 0)
+    wlp.pack_start(dim("Click a picture to use it right away - the same as SUPER+W. It stays your wallpaper after a "
+                       "restart (unless the slideshow below is on)."), False, False, 0)
+    browse = Gtk.FileChooserButton(title="Show the pictures of a folder", action=Gtk.FileChooserAction.SELECT_FOLDER)
+    if os.path.isdir(WALL_DIR):
+        browse.set_filename(WALL_DIR)
+    other = Gtk.Button(label="Another picture...")
+    bb = Gtk.Box(spacing=10)
+    bb.pack_start(browse, True, True, 0)
+    bb.pack_start(other, False, False, 0)
+    wlp.pack_start(row("Pictures from", bb), False, False, 0)
+    flow = Gtk.FlowBox()
+    flow.set_selection_mode(Gtk.SelectionMode.NONE)
+    flow.set_homogeneous(True)
+    flow.set_max_children_per_line(6)
+    flow.set_min_children_per_line(2)
+    flow.set_column_spacing(10)
+    flow.set_row_spacing(10)
+    wlp.pack_start(flow, False, False, 0)
+    flow_msg = dim("")
+    wlp.pack_start(flow_msg, False, False, 0)
+    flow_gen = {"n": 0}                                 # a newer folder stops the thumbnails of the old one
+
+    def fill_flow(folder):
+        flow_gen["n"] += 1
+        gen = flow_gen["n"]
+        for c in flow.get_children():
+            flow.remove(c)
+        wall_buttons.clear()
+        pics = wall_pictures(folder, limit=300)
+        flow_msg.set_text("" if pics else "No pictures (jpg, png, webp) in %s." % (folder or "this folder"))
+        if len(pics) == 300:
+            flow_msg.set_text("Showing the first 300 pictures of this folder.")
+        for p_ in pics:
+            b_ = Gtk.Button()
+            b_.get_style_context().add_class("wall")
+            b_.set_tooltip_text(os.path.basename(p_))
+            img = Gtk.Image.new_from_icon_name("image-x-generic", Gtk.IconSize.DIALOG)
+            img.set_size_request(160, 90)
+            b_.add(img)
+            b_.connect("clicked", lambda _b, q=p_: set_wallpaper(q))
+            if p_ == wall_now["p"]:
+                b_.get_style_context().add_class("wall-on")
+            wall_buttons[p_] = b_
+            flow.add(b_)
+        flow.show_all()
+
+        def load():                                     # thumbnails in the background: a big folder never freezes
+            for p_ in pics:
+                if flow_gen["n"] != gen:
+                    return
+                pb = wall_thumb(p_, 160, 90)
+                if pb is not None:
+                    GLib.idle_add(lambda q=p_, pb_=pb: (flow_gen["n"] == gen and q in wall_buttons and
+                                                        wall_buttons[q].get_child().set_from_pixbuf(pb_)) and False)
+        _wthreads.Thread(target=load, daemon=True).start()
+    browse.connect("file-set", lambda b: fill_flow(b.get_filename()))
+
+    def pick_other(*_a):
+        d = Gtk.FileChooserDialog(title="Choose a wallpaper", transient_for=win, action=Gtk.FileChooserAction.OPEN)
+        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        d.add_button("Use it", Gtk.ResponseType.OK)
+        flt = Gtk.FileFilter()
+        flt.set_name("Pictures")
+        for e in WALL_EXT:
+            flt.add_pattern("*" + e)
+            flt.add_pattern("*" + e.upper())
+        d.add_filter(flt)
+        if browse.get_filename():
+            d.set_current_folder(browse.get_filename())
+        if d.run() == Gtk.ResponseType.OK and d.get_filename():
+            set_wallpaper(d.get_filename())
+        d.destroy()
+    other.connect("clicked", pick_other)
+
+    # the slideshow
+    wlp.pack_start(Gtk.Separator(), False, False, 6)
+    cyc_t = Gtk.Label(label="Slideshow", xalign=0)
+    cyc_t.get_style_context().add_class("title")
+    wlp.pack_start(cyc_t, False, False, 0)
+    wc_saved = {"v": wallcycle_choice(settings)}
+    wc = wc_saved["v"]
+    wc_on = Gtk.Switch()
+    wc_on.set_halign(Gtk.Align.START)
+    wc_on.set_active(wc["enabled"])
+    wlp.pack_start(row("Change the wallpaper by itself", wc_on), False, False, 0)
+    wc_folder = Gtk.FileChooserButton(title="The folder of pictures to cycle through",
+                                      action=Gtk.FileChooserAction.SELECT_FOLDER)
+    if os.path.isdir(wc["folder"]):
+        wc_folder.set_filename(wc["folder"])
+    wc_count = dim("")
+    fb_ = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    fb_.pack_start(wc_folder, False, False, 0)
+    fb_.pack_start(wc_count, False, False, 0)
+    wlp.pack_start(row("Folder", fb_), False, False, 0)
+    wc_every = Gtk.ComboBoxText()
+    for secs, name in WALL_INTERVALS:
+        wc_every.append(str(secs), "Every " + name if secs else name)
+    wc_every.append("custom", "Custom...")
+    wc_min = Gtk.SpinButton.new_with_range(1, 44640, 1)       # (up to 31 days)
+    wc_min.set_halign(Gtk.Align.START)
+    known = [secs for secs, _n in WALL_INTERVALS]
+    if wc["interval"] in known:
+        wc_every.set_active_id(str(wc["interval"]))
+        wc_min.set_value(max(1, wc["interval"] // 60) if wc["interval"] else 10)
+    else:
+        wc_every.set_active_id("custom")
+        wc_min.set_value(max(1, round(wc["interval"] / 60)))
+    wlp.pack_start(row("Change it", wc_every), False, False, 0)
+    wc_min_row = row("Every (minutes)", wc_min)
+    wlp.pack_start(wc_min_row, False, False, 0)
+    wc_order = Gtk.ComboBoxText()
+    wc_order.append("random", "Shuffled (each picture once, then a new shuffle)")
+    wc_order.append("name", "In order, by file name")
+    wc_order.set_active_id(wc["order"])
+    wlp.pack_start(row("Order", wc_order), False, False, 0)
+    wc_next = Gtk.Button(label="Next picture now")
+    wc_next.set_halign(Gtk.Align.START)
+    wlp.pack_start(row("Skip ahead", wc_next), False, False, 0)
+    wlp.pack_start(dim("Pick a folder of pictures and how long each one stays. \"At every login\" changes it once, "
+                       "each time you log in or restart. The time is counted while you are logged out too, and "
+                       "picking a wallpaper yourself starts the wait again. Press Apply to start (or stop) the "
+                       "slideshow."), False, False, 0)
+
+    def wc_form():
+        f = wc_folder.get_filename() or wc_saved["v"]["folder"]
+        sid = wc_every.get_active_id() or "600"
+        secs = int(wc_min.get_value()) * 60 if sid == "custom" else int(sid)
+        return {"enabled": wc_on.get_active(), "folder": f, "interval": secs,
+                "order": wc_order.get_active_id() or "random"}
+
+    def wc_sync(*_a):
+        wc_min_row.set_visible(wc_every.get_active_id() == "custom")
+        n = len(wall_pictures(wc_folder.get_filename() or "", limit=10000)) if wc_folder.get_filename() else 0
+        wc_count.set_text("No pictures in this folder yet." if not n else
+                          "1 picture" if n == 1 else "%d pictures" % n)
+    for w, sig in ((wc_on, "notify::active"), (wc_every, "changed"), (wc_folder, "file-set")):
+        w.connect(sig, wc_sync)
+
+    def wc_skip(*_a):
+        f = wc_form()
+        env = dict(os.environ, WALLCYCLE_FOLDER=f["folder"], WALLCYCLE_ORDER=f["order"])
+        if DRY:
+            print("+ WallCycle.sh --next")
+            return
+        try:
+            subprocess.run([os.path.join(SCRIPTS_DIR, "WallCycle.sh"), "--next"], env=env, timeout=20,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        show_now(current_wallpaper())
+    wc_next.connect("clicked", wc_skip)
+
+    def apply_wall_page(safe):
+        """(Apply) save the slideshow and restart it when it changed."""
+        new = wc_form()
+        settings["wallpaper"] = new
+        safe("wallpaper", apply_wallcycle, settings)
+        if wallcycle_choice(settings) != wc_saved["v"]:
+            wc_saved["v"] = wallcycle_choice(settings)
+            run([os.path.join(SCRIPTS_DIR, "WallCycle.sh"), "--start"])
+            GLib.timeout_add(1500, lambda: show_now(current_wallpaper()) and False)
+
+    def wall_mapped(*_a):
+        if flow_gen["n"] == 0:                          # (the thumbnails are only read when the tab is opened)
+            fill_flow(browse.get_filename() or WALL_DIR)
+        show_now(current_wallpaper())
+        wc_sync()
+    wlp.connect("map", wall_mapped)
+    add_page("wallpaper", scrolled(wlp))
+
     # ---------------- buttons
     bar = Gtk.Box(spacing=10)
     for side in ("top", "bottom", "start", "end"):
@@ -6445,6 +6751,7 @@ def launch_gui(confirm=True, tab=None):
         settings["gestures"] = {"enabled": gest_on.get_active(), "natural": gest_dir.get_active_id() != "reverse"}
         settings["sound"] = {"volume_feedback": fx_vol.get_active(), "screenshot_sound": fx_shot.get_active()}
         safe("sound", apply_sound, settings)
+        apply_wall_page(safe)
         safe("keybindings", kb_commit)
         chosen = [n for n, cb in bar_checks.items() if cb.get_active()]
         if bar_all.get_active() or not chosen:
