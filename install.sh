@@ -343,16 +343,22 @@ install_shell_hook() {
   [ "$do_pokemon" -eq 1 ] || [ "$update_mode" -eq 1 ] || return 0
   local rc real tmp top marker='# i3wm-dots: pokemon fastfetch'
   # I3DOTS_POKEFETCH (not exported) makes sure the greeting shows only once per shell, even if the line is sourced twice
+  # another greeting the shell file runs itself (KoolDots' .zshrc: "pokemon-colorscripts ... | fastfetch ...", or a
+  # plain "fastfetch" line) would show a second one: it is turned off, marked so the uninstaller can put it back
+  local other='^[[:space:]]*(fastfetch|pokemon-colorscripts[^#]*[|][[:space:]]*fastfetch)([[:space:]]|$)' off='#i3wm-dots-off# '
   local line='[ -z "$I3DOTS_POKEFETCH" ] && { [ -n "$KITTY_WINDOW_ID" ] || [ "$TERM_PROGRAM" = ghostty ]; } && [ -x "$HOME/.config/i3/scripts/PokeFetch.sh" ] && { I3DOTS_POKEFETCH=1; "$HOME/.config/i3/scripts/PokeFetch.sh"; }'
   for rc in "${RC_FILES[@]}"; do
     top=0; [ "${rc##*/}" = .zshrc ] && top=1
     if grep -qF "$marker" "$rc" 2>/dev/null; then
       # already there, once, the current version, and (zsh) on the first line: nothing to do
       if grep -qF 'I3DOTS_POKEFETCH' "$rc" && [ "$(grep -cF "$marker" "$rc")" -eq 1 ] \
-         && { [ "$top" -eq 0 ] || [ "$(head -n 1 "$rc")" = "$marker" ]; }; then
+         && { [ "$top" -eq 0 ] || [ "$(head -n 1 "$rc")" = "$marker" ]; } && ! grep -qE "$other" "$rc"; then
         continue
       fi
-      if [ "$top" -eq 1 ]; then say "moving the pokemon fastfetch greeting to the top of $rc (before the prompt theme starts)"
+      if grep -qE "$other" "$rc"; then
+        say "turning off the other fastfetch greeting in $rc (it showed a second one; i3dots-uninstall puts it back):"
+        grep -nE "$other" "$rc" | sed 's/^/     line /'
+      elif [ "$top" -eq 1 ]; then say "moving the pokemon fastfetch greeting to the top of $rc (before the prompt theme starts)"
       else say "refreshing the pokemon fastfetch greeting in $rc (one greeting per terminal)"; fi
     else
       [ "$update_mode" -eq 1 ] && continue
@@ -367,8 +373,9 @@ install_shell_hook() {
     cp -p -- "$real" "$tmp" || continue
     {
       [ "$top" -eq 1 ] && printf '%s\n%s\n' "$marker" "$line"
-      awk -v m="$marker" 'skip { skip = 0; next }
+      awk -v m="$marker" -v o="$other" -v off="$off" 'skip { skip = 0; next }
            index($0, m) == 1 { skip = 1; blank = 0; next }
+           $0 ~ o { $0 = off $0 }
            { if (blank) print ""; blank = 0 }
            /^$/ { blank = 1; next }
            { print }

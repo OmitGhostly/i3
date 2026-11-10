@@ -135,7 +135,7 @@ remove_rc_lines() {   # take the installer's lines (marker + the line after it) 
   local rc real
   for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
     [ -f "$rc" ] || continue
-    grep -qE '^# i3wm-dots: (pokemon fastfetch|see-through asciiquarium|black / grey / white prompt)' "$rc" || continue
+    grep -qE '^(# i3wm-dots: (pokemon fastfetch|see-through asciiquarium|black / grey / white prompt)|#i3wm-dots-off# )' "$rc" || continue
     if [ "$dry" -eq 1 ]; then echo "   + remove the i3wm-dots lines from $rc"; continue; fi
     # (written into the real file through a copy that keeps its permissions: a ~/.zshrc linked from a dotfiles
     #  folder stays a link)
@@ -143,6 +143,7 @@ remove_rc_lines() {   # take the installer's lines (marker + the line after it) 
     cp -p -- "$real" "$real.i3tmp" || continue
     awk 'skip { skip = 0; next }
          /^# i3wm-dots: (pokemon fastfetch|see-through asciiquarium|black \/ grey \/ white prompt)/ { skip = 1; if (blank) blank = 0; next }
+         index($0, "#i3wm-dots-off# ") == 1 { $0 = substr($0, 17) }   # (a greeting of yours the installer turned off)
          { if (blank) print ""; blank = 0 }
          /^$/ { blank = 1; next }
          { print }

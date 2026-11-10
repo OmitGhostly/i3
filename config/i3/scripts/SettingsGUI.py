@@ -30,6 +30,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 CONFIG_DIR = os.path.join((os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")), "i3")
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -159,6 +160,9 @@ def sanitize_settings(data):
                 out[k] = v
         if isinstance(c.get("smart"), bool):
             out["smart"] = c["smart"]
+        v = _num(c.get("corners"), 0, CORNERS_MAX)
+        if v is not None:
+            out["corners"] = v
         return out
 
     def bar(c):
@@ -874,6 +878,22 @@ def apply_terminal_opacity(settings):
         subprocess.run(["pkill", "-USR1", "-x", "kitty"], capture_output=True)         # kitty reloads its config
 
 
+def restart_picom():
+    """Stop picom and start it again with its config. (Picom.sh does nothing while one still runs, so the old one
+    has to be gone first - picom takes a moment to exit.)"""
+    me = str(os.getuid())
+    subprocess.run(["pkill", "-u", me, "-x", "picom"])
+    for _ in range(30):
+        if subprocess.run(["pgrep", "-u", me, "-x", "picom"], capture_output=True).returncode != 0:
+            break
+        time.sleep(0.1)
+    else:
+        subprocess.run(["pkill", "-KILL", "-u", me, "-x", "picom"])
+        time.sleep(0.2)
+    subprocess.Popen([os.path.join(CONFIG_DIR, "scripts", "Picom.sh")],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
 def apply_opacity(settings, restart=False):
     """Window opacity: picom's focused / unfocused values, and the terminal's own background opacity."""
     apply_terminal_opacity(settings)
@@ -905,9 +925,7 @@ def apply_picom_opacity(settings, restart=False):
         f.write(text)
     os.replace(PICOM_CONF + ".i3tmp", PICOM_CONF)
     if restart and subprocess.run(["pgrep", "-x", "picom"], capture_output=True).returncode == 0:
-        subprocess.run(["pkill", "-u", str(os.getuid()), "-x", "picom"])
-        subprocess.Popen([os.path.join(CONFIG_DIR, "scripts", "Picom.sh")],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        restart_picom()
 
 
 # ------------------------------------------------------------------ terminal themes (Ghostty, kitty)
@@ -1090,6 +1108,33 @@ def apply_gaps(settings, reload=False):
         run(["i3-msg", "reload"])
     else:
         run(["i3-msg", "gaps inner all set %d; gaps outer all set %d" % (inner, outer)])
+
+
+# ------------------------------------------------------------------ rounded window corners (picom)
+CORNERS_MAX = 10                  # the slider: 0 = square corners ... 10 = very round
+CORNER_PX = 2                     # pixels of corner radius per step (the shipped look, 8 px, is step 4)
+CORNERS_DEFAULT = 4
+
+
+def corners_level():
+    """The corner rounding picom uses now, as a slider step (0-10)."""
+    return min(CORNERS_MAX, max(0, int(round(read_value(PICOM_CONF, "corner-radius", CORNERS_DEFAULT * CORNER_PX)
+                                             / CORNER_PX))))
+
+
+def apply_corners(settings, restart=False):
+    """Rounded window corners: picom's corner-radius (0 = square). Restarts picom when the file changed."""
+    cfg = settings.get("gaps") or {}
+    if "corners" not in cfg or not os.path.exists(PICOM_CONF):
+        return
+    try:
+        level = min(CORNERS_MAX, max(0, int(cfg["corners"])))
+    except (TypeError, ValueError):
+        return
+    if set_conf_line(PICOM_CONF, r"^[ \t]*corner-radius[ \t]*=.*$", "corner-radius = %d;" % (level * CORNER_PX)) \
+            and restart and not DRY and not FILES_ONLY \
+            and subprocess.run(["pgrep", "-x", "picom"], capture_output=True).returncode == 0:
+        restart_picom()
 
 
 # ------------------------------------------------------------------ colour theme (accent colour for everything)
@@ -2382,9 +2427,7 @@ def apply_bar_blur(settings, restart=True):
         f.write(text)
     os.replace(PICOM_CONF + ".i3tmp", PICOM_CONF)
     if restart and not FILES_ONLY and subprocess.run(["pgrep", "-x", "picom"], capture_output=True).returncode == 0:
-        subprocess.run(["pkill", "-u", str(os.getuid()), "-x", "picom"])
-        subprocess.Popen([os.path.join(CONFIG_DIR, "scripts", "Picom.sh")],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        restart_picom()
 
 
 def apply_bar(settings):
@@ -3571,8 +3614,8 @@ def refresh_files(settings):
     global FILES_ONLY
     FILES_ONLY = True
     failed = []
-    for step in (apply_cursor, apply_opacity, apply_themes, apply_terminal_font, apply_colors, apply_gaps, apply_apps,
-                 apply_gestures, apply_bar_blur):
+    for step in (apply_cursor, apply_opacity, apply_themes, apply_terminal_font, apply_colors, apply_gaps, apply_corners,
+                 apply_apps, apply_gestures, apply_bar_blur):
         try:
             step(settings)
         except Exception as e:  # noqa: BLE001 - one bad setting must not stop the others
@@ -3589,7 +3632,7 @@ def refresh_files(settings):
 def apply_all(settings):
     """Apply every saved setting. One failing step is reported but never stops the others."""
     for step in (apply_mouse, apply_cursor, apply_monitors, apply_opacity, apply_themes, apply_terminal_font, apply_colors,
-                 apply_gaps, apply_apps, apply_sound, apply_gestures, apply_bar_blur, apply_wallcycle):
+                 apply_gaps, apply_corners, apply_apps, apply_sound, apply_gestures, apply_bar_blur, apply_wallcycle):
         try:
             step(settings)
         except Exception as e:  # noqa: BLE001 - login must not break on a bad setting
@@ -3611,7 +3654,7 @@ SIDEBAR = (("network", "Network", "\U000F05A9", "network wifi wi-fi wireless int
            ("sound", "Sound", "\U000F057E", "sound volume audio speakers headphones microphone mic output input", 0),
            ("displays", "Displays", "\U000F0379", "displays monitors screens resolution refresh rate rotate rotation "
                                                     "scale arrange primary brightness backlight dim", 1),
-           ("appearance", "Appearance", "\U000F056E", "appearance bar opacity transparency gaps tiling spiral blur "
+           ("appearance", "Appearance", "\U000F056E", "appearance bar opacity transparency gaps rounded corners radius tiling spiral blur "
                                                         "workspaces position size style", 1),
            ("colors", "Colors", "\U000F03D8", "colors colours accent", 1),
            ("wallpaper", "Wallpaper", "\U000F02E9", "wallpaper background picture photo image slideshow cycle "
@@ -4568,8 +4611,18 @@ def launch_gui(confirm=True, tab=None):
     ap.pack_start(row("Between windows", gap_inner), False, False, 0)
     ap.pack_start(row("Around the screen edge", gap_outer), False, False, 0)
     ap.pack_start(row("No gaps for a lone window", gap_smart), False, False, 0)
-    ap.pack_start(dim("0 px = windows touch (no gap). Turning the last option on makes a single window "
-                      "fill the screen. Changing it reloads i3 (your windows stay open)."), False, False, 0)
+    corner_sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, CORNERS_MAX, 1)
+    corner_sc.set_digits(0)
+    corner_sc.set_value_pos(Gtk.PositionType.RIGHT)
+    try:
+        corner_sc.set_value(min(CORNERS_MAX, max(0, int(gp["corners"]))) if "corners" in gp else corners_level())
+    except (TypeError, ValueError):
+        corner_sc.set_value(corners_level())
+    corner_sc.connect("format-value", lambda _s, v: "%d" % v)
+    ap.pack_start(row("Rounded corners", corner_sc), False, False, 0)
+    ap.pack_start(dim("0 px = windows touch (no gap). Turning \"No gaps for a lone window\" on makes a single window "
+                      "fill the screen; changing it reloads i3 (your windows stay open). Rounded corners: 0 is square, "
+                      "10 is very round - it needs the compositor (picom) running."), False, False, 0)
 
     # window tiling section (same tab)
     ap.pack_start(Gtk.Separator(), False, False, 6)
@@ -6742,8 +6795,9 @@ def launch_gui(confirm=True, tab=None):
         safe("colors", apply_colors, settings)
         provider.load_from_data(css_for(acc["v"]))
         settings["gaps"] = {"inner": int(gap_inner.get_value()), "outer": int(gap_outer.get_value()),
-                            "smart": gap_smart.get_active()}
+                            "smart": gap_smart.get_active(), "corners": int(corner_sc.get_value())}
         safe("gaps", apply_gaps, settings, reload=True)
+        safe("rounded corners", apply_corners, settings, restart=True)
         settings["apps"] = dict(app_new)
         safe("apps", apply_apps, settings)
         settings["tiling"] = {"mode": tiling_mode.get_active_id() or "dwindle"}
