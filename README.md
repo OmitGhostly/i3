@@ -1,6 +1,6 @@
 # i3
 
-Monochrome i3 desktop, with a Settings window (`SUPER + ALT + M`) for network (Wi-Fi, Ethernet, IP and DNS, VPN, proxy), Bluetooth, sound, displays and brightness, the wallpaper (and a wallpaper slideshow), the look and the keys. The cursor is [Capitaine Cursors](assets/cursors).
+Monochrome i3 desktop, with a Settings window (`SUPER + ALT + M`) for network (Wi-Fi, Ethernet, IP and DNS, VPN, proxy), Bluetooth, sound, displays and brightness, power modes (power saver, balanced, performance), the wallpaper (and a wallpaper slideshow), the look (including a 12- or 24-hour clock) and the keys. The cursor is [Capitaine Cursors](assets/cursors).
 
 ![desktop](docs/desktop.png)
 

@@ -833,6 +833,35 @@ install_packages() {
     say "enabling the touchegg service (touchpad swipe gestures)"
     run $SUDO systemctl enable --now touchegg || warn "could not enable touchegg - run: sudo systemctl enable --now touchegg"
   fi
+  ensure_power_profiles
+}
+
+# Power modes (Settings > Power: power saver / balanced / performance) use the system's power profiles service.
+# GNOME and KDE usually bring it already (Fedora: tuned-ppd); otherwise it is installed and started. Not where TLP
+# or auto-cpufreq manage power: power-profiles-daemon would fight them (apt would even remove TLP for it).
+ensure_power_profiles() {
+  command -v systemctl >/dev/null 2>&1 || return 0
+  local p u had=0
+  if ! systemctl cat power-profiles-daemon.service >/dev/null 2>&1 && ! systemctl cat tuned-ppd.service >/dev/null 2>&1; then
+    if command -v tlp >/dev/null 2>&1 || command -v auto-cpufreq >/dev/null 2>&1; then
+      say "power modes: TLP / auto-cpufreq manages power here - Settings > Power stays off (no change made)"
+      return 0
+    fi
+    case "$FAMILY" in fedora) p=tuned-ppd ;; arch|debian) p=power-profiles-daemon ;; *) return 0 ;; esac
+    pkg_available "$p" || return 0
+    pkg_installed "$p" && had=1
+    say "installing $p (power modes: Settings > Power)"
+    if pkg_install "$p"; then [ "$had" -eq 1 ] || record_new_pkgs "$p"
+    else warn "could not install $p - Settings > Power says how"; return 0; fi
+  fi
+  [ "$dry" -eq 1 ] && return 0
+  for u in tuned-ppd power-profiles-daemon; do
+    systemctl cat "$u.service" >/dev/null 2>&1 || continue
+    systemctl is-active "$u" >/dev/null 2>&1 && return 0
+    say "starting the $u service (power modes)"
+    run $SUDO systemctl enable --now "$u" || warn "could not start $u - run: sudo systemctl enable --now $u"
+    return 0
+  done
 }
 
 install_font() {

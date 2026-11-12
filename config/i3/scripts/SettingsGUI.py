@@ -15,7 +15,7 @@ accent colour, wallpaper (and a slideshow), terminal themes, mouse (touchpad ges
   SettingsGUI.py --dry-run  with --apply: print the commands instead of running them
   SettingsGUI.py --i3bar-conf  print i3's own bar for the chosen bar (used where polybar is not installed)
   SettingsGUI.py --tab NAME open on a page: network (or wifi ethernet vpn proxy) bluetooth sound displays
-                            appearance colors wallpaper themes mouse keybindings
+                            power appearance colors wallpaper themes mouse keybindings
 
 Changes are saved to ~/.config/i3/settings.json and applied immediately.
 No root needed.  Requires: python3, python3-gobject (GTK 3), xinput, xrandr (pactl / bluetoothctl / nmcli for those tabs).
@@ -180,6 +180,8 @@ def sanitize_settings(data):
         for k in ("title", "media"):
             if isinstance(c.get(k), bool):
                 out[k] = c[k]
+        if c.get("clock") in ("12", "24"):
+            out["clock"] = c["clock"]
         if _num(c.get("spacing"), 0, BAR_SPACING_MAX) is not None:
             out["spacing"] = clean_spacing(c["spacing"])
         if isinstance(c.get("bg_mode"), str) and c["bg_mode"] in dict(BAR_BG_MODES):
@@ -1603,7 +1605,7 @@ def apply_gestures(settings):
 
 # ------------------------------------------------------------------ top bar (polybar)
 BAR_DEFAULT = {"position": "top", "monitors": None, "size": "large", "style": "solid", "divider": "rounded",
-               "title": False, "media": False, "spacing": 12,
+               "title": False, "media": False, "clock": "24", "spacing": 12,
                "bg_mode": "solid", "bg_opacity": 70, "bg_color": "#000000"}
 # the bar's own background (the dark part around the blocks - the blocks themselves never change): solid, see-through
 # (bg_opacity, 0-100 %) or blurred (see-through, and picom blurs what is behind it), in any colour (bg_color)
@@ -1684,12 +1686,18 @@ def bar_choice(settings):
     return {"bottom": bar.get("position") == "bottom", "size": pick("size", BAR_SIZES),
             "style": pick("style", dict(BAR_STYLES)), "divider": pick("divider", dict(BAR_DIVIDERS)),
             "title": bar.get("title") is True, "media": bar.get("media") is True,
+            "clock": "12" if bar.get("clock") == "12" else "24",
             "spacing": clean_spacing(bar.get("spacing")),
             "bg_mode": pick("bg_mode", dict(BAR_BG_MODES)),
             "bg_opacity": _num(bar.get("bg_opacity"), 0, 100) if _num(bar.get("bg_opacity"), 0, 100) is not None
             else BAR_DEFAULT["bg_opacity"],
             "bg_color": norm_accent(bar.get("bg_color")) or BAR_DEFAULT["bg_color"],
             "monitors": [m for m in mons if isinstance(m, str)] if isinstance(mons, list) else []}
+
+
+# the bar's clock: 24-hour (15:30) or 12-hour (3:30 PM)
+CLOCK_FORMATS = {"24": "%H:%M", "12": "%I:%M %p"}   # (polybar knows no %-I)
+_preview_clock = {"fmt": CLOCK_FORMATS["24"]}      # (what the Appearance preview shows: the form, before Apply)
 
 
 def bar_bg_value(mode, opacity, color):
@@ -2023,7 +2031,7 @@ def bar_env(settings):
            "BAR_LEFT_B": ("b-wsj" if choice["style"] in BAR_JOINED else "b-i3") + (" xwindow" if choice["title"] else ""),
            "BAR_RIGHT": " ".join(bar_modules(items)), "BAR_RIGHT_B": " ".join("b-" + m for m in bar_modules(items)),
            "BAR_BATTERY": battery or "BAT0", "BAR_ADAPTER": charger or "AC",
-           "BAR_MONITORS": " ".join(choice["monitors"])}
+           "BAR_MONITORS": " ".join(choice["monitors"]), "BAR_TIME": CLOCK_FORMATS[choice["clock"]]}
     return "\n".join("%s=%s" % (k, shlex.quote(str(v))) for k, v in env.items())
 
 
@@ -2155,8 +2163,7 @@ def paint_bar(cr, width, style, divider, accent, size="large", items=None, title
         items = list(items if items is not None else BAR_ITEMS)
         texts = {m: PREVIEW_TEXT[m][0 if nerd else 1] for m in items}
         if "date" in texts:
-            import time
-            texts["date"] = time.strftime("%a %d %b  %H:%M")
+            texts["date"] = time.strftime("%a %d %b  " + _preview_clock["fmt"])
     h, font_px, icon_px = dims["height"], dims["text"][0], dims["icon"][0]
     rows, extra = bar_style_rows(style, divider, items, h, lambda n: pal[n], spacing, None if thumb else bar_bg)
     layout = PangoCairo.create_layout(cr)
@@ -2633,6 +2640,67 @@ def apply_sound(settings):
                                                      "false" if cfg["screenshot_sound"] else "true"))
     if os.path.isdir(CONFIG_DIR):
         _write_if_changed(SOUNDS_CONF, text)
+
+
+# ------------------------------------------------------------------ power modes (power-profiles-daemon / tuned-ppd)
+# Both answer on the system bus under these names (the newer one first); GNOME and KDE use the same service.
+PP_BUSES = (("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles"),
+            ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles"))
+POWER_MODES = (("power-saver", "Power saver", "\U000F032A",
+                "Longer battery, a cooler and quieter computer. Programs may run a bit slower."),
+               ("balanced", "Balanced", "\U000F0079", "Good speed when you need it, and saves power when you don't."),
+               ("performance", "Performance", "\U000F0241",
+                "As fast as it goes: for games and big jobs. Uses more power and runs warmer."))
+POWER_HINT = ("Power modes need the power profiles service, which was not found.\n"
+              "Fedora: sudo dnf install tuned-ppd   |   Arch: sudo pacman -S power-profiles-daemon   |   "
+              "Debian/Ubuntu/Mint: sudo apt install power-profiles-daemon\n"
+              "then: sudo systemctl enable --now tuned-ppd  (Fedora)  or  power-profiles-daemon  (the others)")
+
+
+def _pp_call(name, path, method, args, sig):
+    """A Properties call on one of the power profiles service's names: (result, None) or (None, error text)."""
+    from gi.repository import Gio, GLib
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        r = bus.call_sync(name, path, "org.freedesktop.DBus.Properties", method, GLib.Variant(sig, args),
+                          None, Gio.DBusCallFlags.NONE, 3000, None)
+        return r.unpack(), None
+    except Exception as e:  # noqa: BLE001 - no system bus, or no service under this name
+        return None, (e.message if hasattr(e, "message") else str(e))
+
+
+def _pp_find():
+    """(bus name, path, its properties) of the power profiles service, or None."""
+    for name, path in PP_BUSES:
+        r, _e = _pp_call(name, path, "GetAll", (name,), "(s)")
+        if r and r[0].get("ActiveProfile"):
+            return name, path, r[0]
+    return None
+
+
+def power_state():
+    """The power profiles service now: {'active', 'profiles' [names], 'degraded', 'inhibited'} or None."""
+    found = _pp_find()
+    if not found:
+        return None
+    props = found[2]
+    profs = [p.get("Profile") for p in props.get("Profiles", []) if isinstance(p, dict) and p.get("Profile")]
+    return {"active": props.get("ActiveProfile", ""), "profiles": profs,
+            "degraded": props.get("PerformanceDegraded", ""), "inhibited": props.get("PerformanceInhibited", "")}
+
+
+def set_power_mode(mode):
+    """Switch the power mode (power-saver | balanced | performance). None, or what went wrong."""
+    if DRY:
+        print("+ power mode:", mode)
+        return None
+    from gi.repository import GLib
+    found = _pp_find()
+    if not found:
+        return "the power profiles service was not found"
+    name, path, _props = found
+    _r, e = _pp_call(name, path, "Set", (name, "ActiveProfile", GLib.Variant("s", mode)), "(ssv)")
+    return e
 
 
 # ------------------------------------------------------------------ wallpaper slideshow (WallCycle.sh)
@@ -3644,7 +3712,7 @@ def apply_all(settings):
 
 
 # ------------------------------------------------------------------ one settings window at a time
-TAB_NAMES = ("mouse", "displays", "appearance", "colors", "themes", "wallpaper", "keybindings", "sound", "bluetooth",
+TAB_NAMES = ("mouse", "displays", "power", "appearance", "colors", "themes", "wallpaper", "keybindings", "sound", "bluetooth",
              "network", "wifi", "ethernet", "vpn", "proxy")
 NET_PARTS = ("wifi", "ethernet", "vpn", "proxy")     # (parts of the Network page: --tab wifi opens it on Wi-Fi)
 # the list on the left: (page, name, icon (Nerd Font), words the search finds it by, group)
@@ -3654,6 +3722,8 @@ SIDEBAR = (("network", "Network", "\U000F05A9", "network wifi wi-fi wireless int
            ("sound", "Sound", "\U000F057E", "sound volume audio speakers headphones microphone mic output input", 0),
            ("displays", "Displays", "\U000F0379", "displays monitors screens resolution refresh rate rotate rotation "
                                                     "scale arrange primary brightness backlight dim", 1),
+           ("power", "Power", "\U000F0079", "power mode profile battery saver low power balanced performance "
+                                             "energy speed fast laptop", 1),
            ("appearance", "Appearance", "\U000F056E", "appearance bar opacity transparency gaps rounded corners radius tiling spiral blur "
                                                         "workspaces position size style", 1),
            ("colors", "Colors", "\U000F03D8", "colors colours accent", 1),
@@ -3833,6 +3903,12 @@ frame > label { color: @A@; font-weight: bold; }
 .mon-off .mon-num { font-size: 14pt; }
 .mon-off.mon-sel { border: 2px solid @A@; }
 .mon-off.mon-sel label { color: @A@; }
+/* the Power tab */
+button.pmode { padding: 18px 12px; border-radius: 14px; border: 2px solid #1f1f1f; background-color: #0a0a0a; }
+button.pmode:hover { border-color: #6e6e6e; }
+button.pmode:checked, button.pmode:checked:hover { border-color: @A@; background-color: #141414; }
+.pmode-icon { font-family: "FantasqueSansM Nerd Font Mono"; font-size: 26pt; }
+.pmode-name { font-weight: bold; font-size: 12pt; }
 /* the Wallpaper tab */
 button.wall { padding: 3px; border-radius: 10px; border: 2px solid #1f1f1f; background-color: #0a0a0a; }
 button.wall image { -gtk-icon-shadow: none; }   /* (the theme's 1px light shadow under a button's picture) */
@@ -4740,6 +4816,13 @@ def launch_gui(confirm=True, tab=None):
     bar_media.set_halign(Gtk.Align.START)
     bar_media.set_active(bar_saved.get("media") is True)
     ap.pack_start(row("Show what is playing", bar_media), False, False, 0)
+    bar_clock = Gtk.ComboBoxText()
+    bar_clock.append("24", "24-hour  (" + time.strftime(CLOCK_FORMATS["24"]) + ")")
+    bar_clock.append("12", "12-hour  (" + time.strftime(CLOCK_FORMATS["12"]) + ")")
+    bar_clock.set_active_id(bar_choice(settings)["clock"])
+    _preview_clock["fmt"] = CLOCK_FORMATS[bar_clock.get_active_id() or "24"]
+    ap.pack_start(row("Clock", bar_clock), False, False, 0)
+    bar_clock.connect("changed", lambda c: _preview_clock.update(fmt=CLOCK_FORMATS[c.get_active_id() or "24"]))
     # a picture of the bar as it will look, kept up to date with every choice above (and the Colors tab)
     preview_items = bar_items({"media": False})          # the items this computer shows (no battery on a desktop...)
     if have_cairo:
@@ -4784,7 +4867,7 @@ def launch_gui(confirm=True, tab=None):
         bar_preview.set_size_request(-1, BAR_SIZES[bar_size.get_active_id() or BAR_DEFAULT["size"]]["height"] + 1)
         bar_preview.queue_draw()
     for w, sig in ((bar_style, "changed"), (bar_div, "changed"), (bar_size, "changed"), (bar_pos, "changed"),
-                   (bar_title, "notify::active"), (bar_media, "notify::active"), (bar_style, "notify::scale-factor")):
+                   (bar_title, "notify::active"), (bar_media, "notify::active"), (bar_clock, "changed"), (bar_style, "notify::scale-factor")):
         w.connect(sig, refresh_bar_pictures)
     accent_listeners.append(refresh_bar_pictures)
     if have_cairo:
@@ -6473,6 +6556,82 @@ def launch_gui(confirm=True, tab=None):
     set_accent(acc["v"])
     add_page("colors", scrolled(cp))
 
+    # ---------------- power tab: power saver / balanced / performance (the system's power profiles service)
+    pwp = page()
+    pw_title = Gtk.Label(label="Power", xalign=0)
+    pw_title.get_style_context().add_class("title")
+    pwp.pack_start(pw_title, False, False, 0)
+    pw_btns = {}
+    pw_box = Gtk.Box(spacing=12, homogeneous=True)
+    for mode, name, icon, about in POWER_MODES:
+        b_ = Gtk.ToggleButton()
+        b_.get_style_context().add_class("pmode")
+        v_ = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        ic = Gtk.Label(label=icon)
+        ic.get_style_context().add_class("pmode-icon")
+        nm = Gtk.Label(label=name)
+        nm.get_style_context().add_class("pmode-name")
+        ab = Gtk.Label(label=about)
+        ab.set_line_wrap(True)
+        ab.set_max_width_chars(26)
+        ab.set_justify(Gtk.Justification.CENTER)
+        ab.get_style_context().add_class("dim")
+        for w_ in (ic, nm, ab):
+            v_.pack_start(w_, False, False, 0)
+        b_.add(v_)
+        pw_btns[mode] = b_
+        pw_box.pack_start(b_, True, True, 0)
+    pwp.pack_start(pw_box, False, False, 0)
+    pw_msg = dim("")
+    pwp.pack_start(pw_msg, False, False, 0)
+    pw_bat = dim("")
+    pwp.pack_start(pw_bat, False, False, 0)
+    pwp.pack_start(dim("The mode changes right away and stays after a restart. It is the same setting GNOME and KDE "
+                       "show, so it can also change there (or by itself: the system may leave Performance when the "
+                       "computer runs hot, or pick Power saver when the battery is low)."), False, False, 0)
+    pw_busy = {"on": False}
+
+    def pw_show(*_a):
+        st = power_state()
+        pw_busy["on"] = True
+        for mode, b_ in pw_btns.items():
+            b_.set_active(bool(st) and st["active"] == mode)
+            b_.set_sensitive(bool(st) and mode in st["profiles"])
+        pw_busy["on"] = False
+        if not st:
+            pw_msg.set_text(POWER_HINT)
+        else:
+            name = dict((m, n) for m, n, _i, _a in POWER_MODES).get(st["active"], st["active"] or "unknown")
+            notes = ["Now: %s." % name]
+            if "performance" not in st["profiles"]:
+                notes.append("This computer has no Performance mode.")
+            if st["degraded"]:
+                notes.append("Performance is held back right now (%s)." % st["degraded"].replace("-", " "))
+            if st["inhibited"]:
+                notes.append("Performance is blocked right now (%s)." % st["inhibited"].replace("-", " "))
+            pw_msg.set_text(" ".join(notes))
+        bat = query([os.path.join(SCRIPTS_DIR, "Platform.sh"), "battery"]).split()     # ("82 charging")
+        pw_bat.set_text("Battery: %s%%, %s" % (bat[0], bat[1]) if len(bat) >= 2 else "")
+        pw_bat.set_visible(len(bat) >= 2)
+        return False
+
+    def pw_pick(b_, mode):
+        if pw_busy["on"] or not b_.get_active():
+            if not pw_busy["on"] and not b_.get_active():   # (a click on the mode already on keeps it on)
+                pw_busy["on"] = True
+                b_.set_active(True)
+                pw_busy["on"] = False
+            return
+        e = set_power_mode(mode)
+        if e:
+            pw_msg.set_text("Could not switch: %s" % e)
+        GLib.timeout_add(400, pw_show)
+    for mode, b_ in pw_btns.items():
+        b_.connect("toggled", pw_pick, mode)
+    pwp.connect("map", pw_show)
+    GLib.timeout_add_seconds(10, lambda: (pw_show() if pwp.get_mapped() else None) or True)
+    add_page("power", scrolled(pwp))
+
     # ---------------- wallpaper tab: pick one (like SUPER+W), or let a folder of pictures cycle
     gi.require_version("GdkPixbuf", "2.0")
     from gi.repository import GdkPixbuf
@@ -6818,6 +6977,7 @@ def launch_gui(confirm=True, tab=None):
                            "style": bar_style.get_active_id() or BAR_DEFAULT["style"],
                            "divider": bar_div.get_active_id() or BAR_DEFAULT["divider"],
                            "title": bar_title.get_active(), "media": bar_media.get_active(),
+                           "clock": bar_clock.get_active_id() or "24",
                            "spacing": clean_spacing(int(bar_space.get_value()))}
         settings["bar"]["bg_mode"], settings["bar"]["bg_opacity"], settings["bar"]["bg_color"] = bar_bg_now()
         old_icon = wifi_tray_icon(settings)
