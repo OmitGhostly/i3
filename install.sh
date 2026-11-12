@@ -228,7 +228,27 @@ packages_for() {
   esac
 }
 
+# Every package name the repositories offer, read ONCE (one query, a few seconds) - instead of asking the package
+# manager about each of the ~70 packages one by one (on Fedora each dnf query takes a second or two: minutes in all).
+# A name not in the list (a file path, a "provides", another architecture) is still asked about on its own below.
+declare -A PKG_INDEX=()
+pkg_index_read=0
+read_pkg_index() {
+  [ "$pkg_index_read" -eq 0 ] || return 0
+  pkg_index_read=1
+  local n
+  while IFS= read -r n; do
+    [ -n "$n" ] && PKG_INDEX["$n"]=1
+  done < <(case "$FAMILY" in
+             fedora) dnf -q repoquery --available --queryformat '%{name}\n' 2>/dev/null ;;
+             arch)   pacman -Slq 2>/dev/null ;;
+             debian) apt-cache pkgnames 2>/dev/null ;;
+           esac)
+}
+
 pkg_available() {
+  read_pkg_index
+  case "$1" in *[!A-Za-z0-9+._-]*|'') ;; *) [ -n "${PKG_INDEX[$1]:-}" ] && return 0 ;; esac
   case "$FAMILY" in
     fedora) dnf -q repoquery --whatprovides "$1" 2>/dev/null | grep -q . ;;
     arch)   pacman -Si "$1" >/dev/null 2>&1 ;;
@@ -239,7 +259,8 @@ pkg_available() {
 
 pkg_install() {   # pkg_install pkg...
   case "$FAMILY" in
-    fedora) run $SUDO dnf install -y "$@" ;;
+    # (dnf: more downloads at once - the default is 3)
+    fedora) run $SUDO dnf install -y --setopt=max_parallel_downloads=10 "$@" ;;
     arch)   run $SUDO pacman -S --needed --noconfirm "$@" ;;
     debian) run $SUDO apt-get install -y "$@" ;;
   esac
