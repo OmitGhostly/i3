@@ -6,14 +6,14 @@ Monochrome i3 desktop, with a Settings window (`SUPER + ALT + M`) for network (W
 
 ## Install on Linux
 
-Fedora (Workstation with GNOME, and KDE Plasma; up to Fedora 45), Arch, Debian/Ubuntu, Linux Mint.
+Fedora (Workstation, KDE Plasma and the other spins; up to Fedora 45), Arch and its relatives (CachyOS, EndeavourOS, Manjaro), Debian, Ubuntu and its flavours (Kubuntu, Xubuntu, Ubuntu MATE...), Pop!_OS, Linux Mint (Cinnamon, Xfce, MATE). It goes next to the desktop you have (GNOME, KDE, Cinnamon, Xfce, MATE, LXQt, Budgie...), which stays as it is.
 
-Afterwards, log out and pick **i3** at the login screen. On GNOME: click your name, then the gear icon at the bottom right. On KDE: the "Desktop Session" menu under the password box. On Linux Mint: the small round icon next to your name. GNOME and KDE themselves run on Wayland only now, but their login screens still start X11 sessions like i3.
+Afterwards, log out and pick **i3** at the login screen; the installer tells you where for yours. GNOME's login screen: click your name, then the gear icon at the bottom right. KDE: the "Desktop Session" menu under the password box (SDDM: the session menu at the bottom left). Linux Mint, Ubuntu flavours and other LightDM login screens: the small round icon next to your name, or the session icon at the top right. GNOME and KDE themselves run on Wayland only now, but their login screens still start X11 sessions like i3.
 
 On Ubuntu 24.04 and Linux Mint 22, which don't package Ghostty or fastfetch, the installer gets them as `.deb` files: Ghostty 1.3.1 (the last version for Ubuntu 24.04) from [ghostty-ubuntu](https://github.com/mkasberg/ghostty-ubuntu), the community package listed on ghostty.org, and fastfetch from its own releases. Both are installed with apt, so the uninstaller removes them again.
 
 ```bash
-git clone https://github.com/OmitGhostly/i3.git
+git clone --depth 1 https://github.com/OmitGhostly/i3.git
 cd i3
 ./install.sh
 ```
@@ -25,10 +25,6 @@ bash <(curl -fsSL https://raw.githubusercontent.com/OmitGhostly/i3/main/install.
 ```
 
 The file manager is [yazi](https://yazi-rs.github.io), opened in the terminal; folders opened from other programs go there too. On Fedora it comes from the [lihaohong/yazi](https://copr.fedorainfracloud.org/coprs/lihaohong/yazi/) COPR, on Debian/Ubuntu from the Snap Store (or yazi's own release build), elsewhere from your repos. Thunar stays installed, and Settings > Keybindings switches between them.
-
-## FreeBSD, GhostBSD, OpenBSD, NetBSD
-
-They have their own version of these dots: [OmitGhostly/i3-bsd](https://github.com/OmitGhostly/i3-bsd). A BSD desktop installed from here earlier moves there by itself at its next `i3dots-update`.
 
 ## Updates
 

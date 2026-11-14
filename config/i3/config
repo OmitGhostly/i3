@@ -419,7 +419,7 @@ exec --no-startup-id sh -c 'if command -v systemctl >/dev/null 2>&1; then dbus-u
 exec --no-startup-id ~/.config/i3/scripts/Input.sh
 exec --no-startup-id ~/.config/i3/scripts/Polkit.sh
 exec --no-startup-id ~/.config/i3/scripts/Picom.sh
-exec --no-startup-id dunst
+exec --no-startup-id ~/.config/i3/scripts/Dunst.sh
 exec --no-startup-id ~/.config/i3/scripts/Wallpaper.sh --restore
 # NetworkManager's password helper (nm-applet), with its tray icon hidden: the Wi-Fi item in the bar opens
 # Settings > Wi-Fi instead. The icon can be switched back on there. (exec_always: it only starts once.)

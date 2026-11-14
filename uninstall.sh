@@ -80,12 +80,9 @@ ask() {   # ask "question" default(y|n) -> 0 for yes
   case "${a:-$def}" in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
-# FreeBSD, GhostBSD, OpenBSD and NetBSD have their own version (github.com/OmitGhostly/i3-bsd), with its own uninstaller
 case "${I3DOTS_OS:-$(uname -s)}" in
-  FreeBSD|OpenBSD|NetBSD|DragonFly)
-    printf '\033[1;31mxx\033[0m %s\n' "This is the Linux version. On $(uname -s) use the uninstaller the install left you (i3dots-uninstall)," \
-      "   or the one in https://github.com/OmitGhostly/i3-bsd" >&2
-    exit 1 ;;
+  Linux) ;;
+  *) printf '\033[1;31mxx\033[0m %s\n' "This uninstaller is made for Linux - it does not run on ${I3DOTS_OS:-$(uname -s)}." >&2; exit 1 ;;
 esac
 
 detect_family() {

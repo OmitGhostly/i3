@@ -25,8 +25,6 @@
 #  Package managers: dnf (Fedora - the main target), pacman (Arch & derivatives),
 #  apt (Debian, Ubuntu, Mint, Pop!_OS). Anything else: install the programs
 #  yourself, then run with --no-packages.
-#  FreeBSD, GhostBSD, OpenBSD and NetBSD have their own version of these dots:
-#  https://github.com/OmitGhostly/i3-bsd
 #  A log of every run is written to ~/.cache/i3wm-dots-install.log
 # =============================================================================
 set -uo pipefail
@@ -51,7 +49,7 @@ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 say()  { printf '\033[1;35m::\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '3,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 for arg in "$@"; do
   case "$arg" in
@@ -96,6 +94,10 @@ if [ "$dry" -eq 0 ]; then
   say "log: $LOG"
 fi
 
+# apt: wait (up to 10 minutes) when another program holds the package lock, instead of failing at once - right
+# after a login, KDE's Discover, GNOME Software or the automatic updates are often busy with it
+APT="apt-get -o DPkg::Lock::Timeout=600"
+
 # ---- privileges ---------------------------------------------------------------
 # Packages are installed as root: through sudo, else doas (it needs a rule in /etc/doas.conf), else su (asks
 # for root's password). $SUDO is put in front of those commands.
@@ -115,31 +117,8 @@ else
   fi
 fi
 
-# ---- FreeBSD, GhostBSD, OpenBSD and NetBSD: their own version of these dots ------------------------------------
-# A BSD desktop installed from here before the split gets its updates from the BSD repo from now on, and that repo's
-# installer takes over right away; a new install there is pointed to it.
-BSD_REPO="${I3DOTS_BSD_REPO:-https://github.com/OmitGhostly/i3-bsd.git}"
-bsd_moved() {
-  local u="${XDG_DATA_HOME:-$HOME/.local/share}/i3wm-dots-updater/repo-url" tmp rc
-  if [ "$update_mode" -eq 1 ]; then
-    if [ -f "$u" ]; then printf '%s\n' "$BSD_REPO" >"$u"; fi
-    tmp="$(mktemp -d)"
-    if command -v git >/dev/null 2>&1 && git clone -q --depth 1 "$BSD_REPO" "$tmp/i3-bsd" >/dev/null 2>&1 \
-       && [ -f "$tmp/i3-bsd/install.sh" ]; then
-      say "this is $(uname -s): FreeBSD, GhostBSD, OpenBSD and NetBSD have their own version now - continuing with it"
-      say "(updates come from $BSD_REPO from now on)"
-      bash "$tmp/i3-bsd/install.sh" "$@"; rc=$?
-      # (the version installed now, for the updater - it wrote down this repo's)
-      [ "$rc" -eq 0 ] && [ -d "${u%/*}" ] && git -C "$tmp/i3-bsd" rev-parse HEAD >"${u%/*}/handoff" 2>/dev/null
-      rm -rf "$tmp"; exit "$rc"
-    fi
-    rm -rf "$tmp"
-    die "could not download the BSD version ($BSD_REPO) - updates come from there from now on: try i3dots-update again later"
-  fi
-  die "This is the Linux version. FreeBSD, GhostBSD, OpenBSD and NetBSD have their own:
-   https://github.com/OmitGhostly/i3-bsd   (README.md there has the install command for each system)"
-}
-case "${I3DOTS_OS:-$(uname -s)}" in FreeBSD|OpenBSD|NetBSD|DragonFly) bsd_moved "$@" ;; esac
+# ---- Linux only ---------------------------------------------------------------------
+case "${I3DOTS_OS:-$(uname -s)}" in Linux) ;; *) die "This config is made for Linux - it cannot be installed on ${I3DOTS_OS:-$(uname -s)}." ;; esac
 
 # ---- distro detection -----------------------------------------------------------
 detect_family() {
@@ -167,7 +146,7 @@ if [ ! -f "$here/install.sh" ] || [ ! -f "$here/config/i3/config" ]; then
     case "$FAMILY" in
       fedora) run $SUDO dnf install -y git ;;
       arch)   run $SUDO pacman -S --needed --noconfirm git ;;
-      debian) run $SUDO apt-get update; run $SUDO apt-get install -y git ;;
+      debian) run $SUDO $APT update; run $SUDO $APT install -y git ;;
       *) die "git is needed to download the dotfiles - install git and re-run" ;;
     esac
   fi
@@ -231,30 +210,69 @@ packages_for() {
 # Every package name the repositories offer, read ONCE (one query, a few seconds) - instead of asking the package
 # manager about each of the ~70 packages one by one (on Fedora each dnf query takes a second or two: minutes in all).
 # A name not in the list (a file path, a "provides", another architecture) is still asked about on its own below.
+# (Debian / Ubuntu / Mint: apt answers each question from its own cache in a few hundredths of a second, and only
+# that answer says whether a package can really be installed - so there every package is still asked about.)
 declare -A PKG_INDEX=()
 pkg_index_read=0
 read_pkg_index() {
   [ "$pkg_index_read" -eq 0 ] || return 0
   pkg_index_read=1
   local n
+  # (Fedora: as root, so the package lists dnf downloads now - on a fresh system that takes a while, with its
+  # progress shown - are the ones the install itself uses, instead of being downloaded a second time)
+  [ "$FAMILY" = fedora ] && say "reading the package lists (on a fresh system dnf downloads them first: a minute or two)"
   while IFS= read -r n; do
     [ -n "$n" ] && PKG_INDEX["$n"]=1
   done < <(case "$FAMILY" in
-             fedora) dnf -q repoquery --available --queryformat '%{name}\n' 2>/dev/null ;;
+             fedora) $SUDO dnf repoquery --available --queryformat '%{name}\n' ;;   # (its progress: on the screen)
              arch)   pacman -Slq 2>/dev/null ;;
-             debian) apt-cache pkgnames 2>/dev/null ;;
            esac)
+}
+
+# Another program installing or updating packages right now (Discover / GNOME Software / automatic updates, a
+# terminal): the package manager would stop or wait without a word, so the wait is said out loud. Up to 15 minutes.
+other_installs() {
+  local p
+  for p in dnf dnf5 dnf-automatic rpm yum apt apt-get aptitude dpkg unattended-upgr pacman yay paru pamac; do
+    pgrep -x "$p" >/dev/null 2>&1 && printf '%s\n' "$p"
+  done | paste -sd ' ' -
+}
+wait_for_other_installs() {
+  [ "$dry" -eq 1 ] && return 0
+  local busy waited=0
+  busy="$(other_installs)"
+  [ -n "$busy" ] || return 0
+  say "another program is installing or updating packages right now ($busy) - often Discover, GNOME Software or"
+  say "the automatic updates just after logging in. Waiting for it to finish (up to 15 minutes)..."
+  while [ -n "$busy" ] && [ "$waited" -lt 900 ]; do
+    sleep 10; waited=$((waited + 10))
+    busy="$(other_installs)"
+    [ $((waited % 60)) -eq 0 ] && [ -n "$busy" ] && say "  still waiting for: $busy ($((waited / 60)) min)"
+  done
+  [ -n "$busy" ] && warn "still busy ($busy) - trying anyway; if the install fails, close Discover / Software and run it again"
+  return 0
 }
 
 pkg_available() {
   read_pkg_index
   case "$1" in *[!A-Za-z0-9+._-]*|'') ;; *) [ -n "${PKG_INDEX[$1]:-}" ] && return 0 ;; esac
   case "$FAMILY" in
-    fedora) dnf -q repoquery --whatprovides "$1" 2>/dev/null | grep -q . ;;
+    fedora) $SUDO dnf -q repoquery --whatprovides "$1" 2>/dev/null | grep -q . ;;   # (as root: the same package lists)
     arch)   pacman -Si "$1" >/dev/null 2>&1 ;;
     debian) [ -n "$(apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/{print $2}' | grep -v '^(none)$')" ] ;;
     *)      return 1 ;;
   esac
+}
+
+# Fedora: the same install, but a package that cannot be installed is left out instead of stopping everything
+# (dnf5: --skip-broken --skip-unavailable; the older dnf: --skip-broken and strict=0)
+pkg_install_lenient() {
+  [ "$FAMILY" = fedora ] || return 1
+  if case "$(dnf --version 2>/dev/null)" in *dnf5*) true ;; *) false ;; esac; then
+    run $SUDO dnf install -y --setopt=max_parallel_downloads=10 --skip-broken --skip-unavailable "$@"
+  else
+    run $SUDO dnf install -y --setopt=max_parallel_downloads=10 --skip-broken --setopt=strict=0 "$@"
+  fi
 }
 
 pkg_install() {   # pkg_install pkg...
@@ -262,7 +280,7 @@ pkg_install() {   # pkg_install pkg...
     # (dnf: more downloads at once - the default is 3)
     fedora) run $SUDO dnf install -y --setopt=max_parallel_downloads=10 "$@" ;;
     arch)   run $SUDO pacman -S --needed --noconfirm "$@" ;;
-    debian) run $SUDO apt-get install -y "$@" ;;
+    debian) run $SUDO $APT install -y "$@" ;;
   esac
 }
 
@@ -527,7 +545,7 @@ install_ghostty_deb() {
   tmp="$(mktemp -d)"; CLEANUP+=("$tmp"); chmod 755 "$tmp"   # (apt reads it as its own user)
   if curl -fsSL --retry 2 -o "$tmp/$file" "$url" && chmod 644 "$tmp/$file" \
      && [ "$(dpkg-deb -f "$tmp/$file" Package 2>/dev/null)" = ghostty ] \
-     && run $SUDO apt-get install -y "$tmp/$file"; then
+     && run $SUDO $APT install -y "$tmp/$file"; then
     rc=0
   fi
   rm -rf "$tmp"
@@ -689,7 +707,7 @@ install_fastfetch_deb() {
   if curl -fsSL --retry 2 -o "$tmp/fastfetch.deb" \
           "https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-$arch.deb" \
      && chmod 644 "$tmp/fastfetch.deb" && [ "$(dpkg-deb -f "$tmp/fastfetch.deb" Package 2>/dev/null)" = fastfetch ] \
-     && run $SUDO apt-get install -y "$tmp/fastfetch.deb"; then
+     && run $SUDO $APT install -y "$tmp/fastfetch.deb"; then
     rc=0; [ "$had" -eq 1 ] || record_new_pkgs fastfetch
   else
     warn "fastfetch could not be installed - the terminal greeting stays off until you install it"
@@ -791,7 +809,7 @@ install_folder_handler() {
 
 install_packages() {
   if [ "$FAMILY" = unknown ]; then
-    warn "Unsupported distro (automated: Fedora, Arch and Debian/Ubuntu families; the BSDs: github.com/OmitGhostly/i3-bsd)."
+    warn "Unsupported distro (automated: Fedora, Arch and Debian/Ubuntu families)."
     warn "Install yourself:  i3 (>=4.22) xorg polybar picom dunst rofi kitty feh maim xdotool xclip xss-lock i3lock"
     warn "  imagemagick brightnessctl pamixer playerctl pavucontrol nm-applet redshift clipmenu|copyq numlockx xinput"
     warn "  xrandr xprop xdpyinfo setxkbmap libnotify mpv qalc jq curl arandr thunar polkit-gnome|mate-polkit lxappearance fastfetch bluez blueman pactl touchegg"
@@ -800,7 +818,8 @@ install_packages() {
     return 0
   fi
   say "$FAMILY-based system detected - checking which packages your repos provide"
-  [ "$FAMILY" = debian ] && run $SUDO apt-get update
+  wait_for_other_installs
+  [ "$FAMILY" = debian ] && run $SUDO $APT update
 
   local have=() item pick alt alts
   # shellcheck disable=SC2046
@@ -819,13 +838,35 @@ install_packages() {
     if [ -n "$pick" ]; then have+=("$pick"); else missing+=("${item//|/ or }"); fi
   done
 
+  # Asked for in the same run, so the package manager works once instead of four times: Ghostty and yazi where
+  # your repos have them, yazi's helpers, the power modes service. (Not in the repos: the steps further down.)
+  local extras=()
+  for item in $(bulk_extras); do
+    pick=""
+    IFS='|' read -ra alts <<<"$item"
+    for alt in "${alts[@]}"; do pkg_installed "$alt" && { pick=-; break; }; done      # (there already)
+    if [ -z "$pick" ]; then
+      for alt in "${alts[@]}"; do
+        if [ "$dry" -eq 0 ] && pkg_available "$alt"; then pick="$alt"; break; fi
+      done
+    fi
+    [ -n "$pick" ] && [ "$pick" != - ] && extras+=("$pick")
+  done
+
   local new=() p
-  for p in "${have[@]}"; do pkg_installed "$p" || new+=("$p"); done      # (not installed yet: ours if it gets installed)
-  say "installing ${#have[@]} packages"
-  if ! pkg_install "${have[@]}"; then
-    warn "bulk install failed - retrying one package at a time so a single problem cannot block the rest"
-    [ "$FAMILY" = arch ] && warn "(if pacman reported 404s, run 'sudo pacman -Syu' once and re-run this script)"
-    for p in "${have[@]}"; do pkg_install "$p" || missing+=("$p"); done
+  for p in "${have[@]}" "${extras[@]}"; do pkg_installed "$p" || new+=("$p"); done   # (not installed yet: ours if it gets installed)
+  say "installing $(( ${#have[@]} + ${#extras[@]} )) packages"
+  if ! pkg_install "${have[@]}" "${extras[@]}"; then
+    # Fedora: once more, letting dnf leave out a package that cannot be installed (a conflict with something your
+    # desktop brought, a broken dependency) - much quicker than asking for every package on its own
+    if [ "$FAMILY" = fedora ] && { warn "bulk install failed - once more, leaving out what cannot be installed"; pkg_install_lenient "${have[@]}" "${extras[@]}"; }; then
+      for p in "${have[@]}"; do pkg_installed "$p" || missing+=("$p"); done
+    else
+      warn "bulk install failed - retrying one package at a time so a single problem cannot block the rest"
+      [ "$FAMILY" = arch ] && warn "(if pacman reported 404s, run 'sudo pacman -Syu' once and re-run this script)"
+      for p in "${have[@]}"; do pkg_install "$p" || missing+=("$p"); done
+      for p in "${extras[@]}"; do pkg_install "$p" >/dev/null 2>&1 || true; done
+    fi
   fi
   record_new_pkgs "${new[@]}"
 
@@ -860,6 +901,24 @@ install_packages() {
 # Power modes (Settings > Power: power saver / balanced / performance) use the system's power profiles service.
 # GNOME and KDE usually bring it already (Fedora: tuned-ppd); otherwise it is installed and started. Not where TLP
 # or auto-cpufreq manage power: power-profiles-daemon would fight them (apt would even remove TLP for it).
+power_pkg_wanted() {   # the package to install for the power modes; nothing when there is a service, or TLP
+  command -v systemctl >/dev/null 2>&1 || return 0
+  systemctl cat power-profiles-daemon.service >/dev/null 2>&1 && return 0
+  systemctl cat tuned-ppd.service >/dev/null 2>&1 && return 0
+  command -v tlp >/dev/null 2>&1 && return 0
+  command -v auto-cpufreq >/dev/null 2>&1 && return 0
+  case "$FAMILY" in fedora) echo tuned-ppd ;; arch|debian) echo power-profiles-daemon ;; esac
+}
+
+# what goes into the one big package run besides the list above (see install_packages)
+bulk_extras() {
+  [ "$update_mode" -eq 1 ] && return 0
+  [ "$do_ghostty" -eq 1 ] && ! command -v ghostty >/dev/null 2>&1 && echo ghostty
+  have_yazi || echo yazi
+  yazi_extras
+  power_pkg_wanted
+}
+
 ensure_power_profiles() {
   command -v systemctl >/dev/null 2>&1 || return 0
   local p u had=0
@@ -868,7 +927,7 @@ ensure_power_profiles() {
       say "power modes: TLP / auto-cpufreq manages power here - Settings > Power stays off (no change made)"
       return 0
     fi
-    case "$FAMILY" in fedora) p=tuned-ppd ;; arch|debian) p=power-profiles-daemon ;; *) return 0 ;; esac
+    p="$(power_pkg_wanted)"; [ -n "$p" ] || return 0
     pkg_available "$p" || return 0
     pkg_installed "$p" && had=1
     say "installing $p (power modes: Settings > Power)"
@@ -885,16 +944,31 @@ ensure_power_profiles() {
   done
 }
 
+# The font is downloaded while the packages install (it needs no package manager): started here, used by
+# install_font below - which downloads it itself when this did not happen or did not work.
+FONT_URL="https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FantasqueSansMono.zip"
+font_pre="" font_pre_pid=""
+have_font() { fc-list 2>/dev/null | grep -iE 'fantasque.*nerd|nerd.*fantasque' >/dev/null; }
+prefetch_font() {
+  [ "$dry" -eq 0 ] && command -v curl >/dev/null 2>&1 || return 0
+  command -v fc-list >/dev/null 2>&1 && have_font && return 0
+  font_pre="$(mktemp -d)"; CLEANUP+=("$font_pre")
+  ( curl -fsSL --retry 2 -o "$font_pre/f.part" "$FONT_URL" && mv -f "$font_pre/f.part" "$font_pre/f.zip" ) >/dev/null 2>&1 &
+  font_pre_pid=$!
+}
+
 install_font() {
+  [ -n "$font_pre_pid" ] && { wait "$font_pre_pid" 2>/dev/null; font_pre_pid=""; }
   command -v fc-list >/dev/null 2>&1 || return 0
   # (grep reads all of fc-list's output: with -q it would stop early, and pipefail would count that as a failure)
-  if fc-list 2>/dev/null | grep -iE 'fantasque.*nerd|nerd.*fantasque' >/dev/null; then return 0; fi
+  if have_font; then return 0; fi
   if command -v curl >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1; then
     say "installing FantasqueSansM Nerd Font (icons in the bar and terminal)"
     local fd="${XDG_DATA_HOME:-$HOME/.local/share}/fonts/FantasqueSansMNerd" tmp
     tmp="$(mktemp -d)"; CLEANUP+=("$tmp")
     # (the folder is written down before unpacking into it, so a stopped install still leaves it recorded)
-    if run curl -fsSL -o "$tmp/f.zip" "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FantasqueSansMono.zip" \
+    if { { [ -n "$font_pre" ] && [ -s "$font_pre/f.zip" ] && run mv -f "$font_pre/f.zip" "$tmp/f.zip"; } \
+         || run curl -fsSL --retry 2 -o "$tmp/f.zip" "$FONT_URL"; } \
        && { [ -e "$fd" ] || record path "$fd"; } && run mkdir -p "$fd" && run unzip -qo "$tmp/f.zip" -d "$fd"; then
       run fc-cache -f "$fd" >/dev/null 2>&1
     else
@@ -906,10 +980,21 @@ install_font() {
   fi
 }
 
-if [ "$do_packages" -eq 1 ]; then install_packages; install_fastfetch_deb || true; install_font; fi
+# (the font and the greeting's sprite download while the packages install; their messages follow afterwards)
+poke_out="" poke_pid=""
+if [ "$do_packages" -eq 1 ]; then
+  prefetch_font
+  if [ "$dry" -eq 0 ] && [ "$do_pokemon" -eq 1 ] && command -v git >/dev/null 2>&1; then
+    poke_out="$(mktemp)"; CLEANUP+=("$poke_out")
+    install_pokemon >"$poke_out" 2>&1 &
+    poke_pid=$!
+  fi
+  install_packages; install_fastfetch_deb || true; install_font
+fi
 [ "$update_mode" -eq 1 ] || ensure_terminals
 [ "$update_mode" -eq 1 ] || ensure_file_manager
-install_pokemon
+if [ -n "$poke_pid" ]; then wait "$poke_pid" 2>/dev/null; cat "$poke_out" 2>/dev/null; rm -f "$poke_out"; fi
+install_pokemon          # (nothing to do when it is there already: also the way in without git before the packages)
 
 # ---- copy configs ---------------------------------------------------------------
 # a first install (not a re-install over our own files): only then does the first login pick a wallpaper
@@ -1181,12 +1266,23 @@ if [ "${#missing[@]}" -gt 0 ]; then
   warn "install them manually, or the matching keybinds/modules will do nothing (log: ~/.cache/i3wm-dots-install.log)"
 fi
 
+# How to get to i3 depends on the login screen (the display manager), whatever desktop you came from: GNOME's
+# GDM, KDE's SDDM or Plasma Login Manager, LightDM (Linux Mint / Cinnamon, Xfce, MATE, Budgie), LXDM, COSMIC's ...
 # shellcheck source=/dev/null
 os_id="$( . "${I3DOTS_OS_RELEASE:-/etc/os-release}" 2>/dev/null; echo "${ID:-}" )"
-case "$os_id:${XDG_CURRENT_DESKTOP:-}" in
-  linuxmint:*) how='Linux Mint: log out, then on the login screen click the small round icon next to your name and choose "i3".' ;;
-  *:*GNOME*) how='GNOME: log out, click your name, then the gear icon (bottom-right) and choose "i3".' ;;
-  *:*KDE*)   how='KDE: log out, then choose "i3" in the "Desktop Session" menu under the password box (older KDE login screens: the session menu at the bottom-left).' ;;
+login_dm="$(readlink "${I3DOTS_TEST_ROOT:-}/etc/systemd/system/display-manager.service" 2>/dev/null)"
+login_dm="${login_dm##*/}"; login_dm="${login_dm%.service}"
+case "$login_dm:$os_id:${XDG_CURRENT_DESKTOP:-}" in
+  lightdm:linuxmint:*|lightdm:*:*X-Cinnamon*|lightdm:*:*Budgie*|lightdm:ubuntu:*)
+             how='Log out, then on the login screen click the small round icon next to your name and choose "i3".' ;;
+  lightdm:*) how='Log out, then pick "i3" in the session menu of the login screen (on most: the icon at the top-right,
+       or next to your name).' ;;
+  gdm*:*)    how='Log out, click your name, then the gear icon (bottom-right) and choose "i3".' ;;
+  plasmalogin:*) how='Log out, then choose "i3" in the "Desktop Session" menu under the password box.' ;;
+  sddm:*)    how='Log out, then choose "i3" in the session menu at the bottom-left of the login screen (KDE: "Desktop Session").' ;;
+  *:linuxmint:*) how='Log out, then on the login screen click the small round icon next to your name and choose "i3".' ;;
+  *:*:*GNOME*) how='Log out, click your name, then the gear icon (bottom-right) and choose "i3".' ;;
+  *:*:*KDE*) how='Log out, then choose "i3" in the "Desktop Session" menu under the password box (older KDE login screens: the session menu at the bottom-left).' ;;
   *)         how='Log out and choose the "i3" session at your login screen (or put "exec i3" in ~/.xinitrc).' ;;
 esac
 how="$how
@@ -1212,8 +1308,7 @@ MSG
 # Wayland-only now, other desktops' X11 sessions are not), and so do KDE's Plasma Login Manager (Fedora 44+), SDDM
 # and LightDM - unless X11 was switched off in GDM's settings, which hides i3 from the list.
 sysroot="${I3DOTS_TEST_ROOT:-}"
-dm="$(readlink "$sysroot/etc/systemd/system/display-manager.service" 2>/dev/null)"; dm="${dm##*/}"; dm="${dm%.service}"
-case "$dm" in
+case "$login_dm" in
   gdm|gdm3)
     for f in "$sysroot/etc/gdm/custom.conf" "$sysroot/etc/gdm3/custom.conf" "$sysroot/etc/gdm3/daemon.conf"; do
       [ -r "$f" ] || continue
