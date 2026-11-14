@@ -291,6 +291,22 @@ config_step() {
   if [ -f "$f" ] && ! grep -qvE '^[[:space:]]*$|^\[Settings\]$|^gtk-cursor-theme-(name|size)=' "$f"; then
     run rm -f "$f"; gone "~/.config/gtk-4.0/settings.ini (only the cursor was in it)"
   fi
+  # GNOME apps (Settings > Themes): its part of gtk.css (the file goes when nothing else is in it), and GNOME's
+  # dark-mode setting back to what it was
+  f="$cfg/gtk-4.0/gtk.css"
+  if [ -f "$f" ] && grep -qF '/* >>> i3wm-dots: GNOME apps' "$f"; then
+    if [ "$dry" -eq 0 ]; then
+      awk 'index($0, "/* >>> i3wm-dots: GNOME apps") == 1 { skip = 1 } !skip { print } index($0, "/* <<< i3wm-dots <<< */") == 1 { skip = 0 }' \
+        "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
+      grep -q '[^[:space:]]' "$f" || rm -f "$f"
+    fi
+    gone "the GNOME apps colours in ~/.config/gtk-4.0/gtk.css"
+  fi
+  f="${XDG_STATE_HOME:-$HOME/.local/state}/i3wm-dots/gnome-color-scheme"
+  if [ -f "$f" ] && command -v gsettings >/dev/null 2>&1; then
+    v="$(head -n1 "$f")"
+    case "$v" in default|prefer-light|prefer-dark) run gsettings set org.gnome.desktop.interface color-scheme "$v" 2>/dev/null ;; esac
+  fi
   remove_block "$HOME/.xprofile" "# >>> i3wm-dots cursor" "# <<< i3wm-dots cursor <<<"
   remove_block "$HOME/.Xresources" "! >>> i3wm-dots cursor" "! <<< i3wm-dots cursor <<<"
   # the proxy the Settings window set (Network > Proxy): its lines, and GNOME's proxy setting only when it set one

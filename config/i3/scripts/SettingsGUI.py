@@ -251,7 +251,11 @@ def sanitize_settings(data):
         a = norm_accent(c.get("accent"))
         return {"accent": a} if a and brightness(a) >= ACCENT_MIN_BRIGHT else {}
 
+    def gnome_apps(c):
+        return {"dark": c["dark"]} if isinstance(c.get("dark"), bool) else {}
+
     for key, fn in (("mouse", mouse), ("monitors", monitors), ("opacity", opacity), ("gaps", gaps), ("bar", bar),
+                    ("gnome_apps", gnome_apps),
                     ("cursor", cursor), ("apps", apps), ("keybinds", keybinds), ("themes", themes), ("colors", colors), ("tiling", tiling), ("sound", sound), ("terminal_font", terminal_font),
                     ("gestures", gestures), ("network", network), ("proxy", proxy)):
         clean(key, fn)
@@ -1030,6 +1034,89 @@ def apply_themes(settings):
         line = "include ~/.config/kitty/kitty-themes/%s.conf" % ki
         if set_conf_line(KITTY_CONF, r"^[ \t]*include[ \t]+\S*kitty-themes/[^/\s]+\.conf[ \t]*$", line) and not DRY:
             subprocess.run(["pkill", "-USR1", "-x", "kitty"], capture_output=True)
+
+
+# ------------------------------------------------------------------ GNOME apps (Nautilus, GNOME Text Editor ...)
+# They are made with libadwaita, which ignores GTK themes: dark mode is GNOME's colour-scheme setting, and the colours
+# come from ~/.config/gtk-4.0/gtk.css. The Settings window writes its own part of that file (between the marks below;
+# anything else in the file is left as it is) - black and grey with light text and the accent colour.
+GTK4_CSS = os.path.join(_CFG_HOME, "gtk-4.0", "gtk.css")
+GNOME_CSS_BEGIN = "/* >>> i3wm-dots: GNOME apps, written by the Settings window (Themes tab) */"
+GNOME_CSS_END = "/* <<< i3wm-dots <<< */"
+GNOME_SCHEME_SAVED = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"),
+                                  "i3wm-dots", "gnome-color-scheme")        # what it was before: put back when off
+
+
+def _gnome_css(accent):
+    fg = "#000000" if brightness(accent) > 0.55 else "#ffffff"
+    # dark grey (not black), light text; the "backdrop" colours are the ones an unfocused window uses
+    bg, view, card, pop, text = "#242424", "#1e1e1e", "#2e2e2e", "#2a2a2a", "#e8e8e8"
+    names = [("window_bg_color", bg), ("window_fg_color", text), ("view_bg_color", view), ("view_fg_color", text),
+             ("headerbar_bg_color", bg), ("headerbar_fg_color", text), ("headerbar_backdrop_color", bg),
+             ("headerbar_shade_color", "rgba(0, 0, 0, 0.36)"), ("sidebar_bg_color", bg), ("sidebar_fg_color", text),
+             ("sidebar_backdrop_color", bg), ("sidebar_shade_color", "rgba(0, 0, 0, 0.25)"),
+             ("secondary_sidebar_bg_color", view), ("secondary_sidebar_fg_color", text),
+             ("secondary_sidebar_backdrop_color", view), ("card_bg_color", card), ("card_fg_color", text),
+             ("popover_bg_color", pop), ("popover_fg_color", text), ("dialog_bg_color", pop), ("dialog_fg_color", text),
+             ("thumbnail_bg_color", card), ("thumbnail_fg_color", text),
+             ("accent_bg_color", accent), ("accent_fg_color", fg), ("accent_color", accent)]
+    lines = [GNOME_CSS_BEGIN] + ["@define-color %s %s;" % kv for kv in names]
+    lines.append(":root {")             # (newer libadwaita, GNOME 47 and later, reads these instead)
+    lines += ["  --%s: %s;" % (k.replace("_", "-"), v) for k, v in names]
+    lines += ["}", GNOME_CSS_END]
+    return "\n".join(lines) + "\n"
+
+
+def _gsettings_scheme(value=None):
+    """GNOME's colour-scheme setting: read it (value None), or set it. None when there is no such setting."""
+    if not shutil.which("gsettings") or "color-scheme" not in query(["gsettings", "list-keys",
+                                                                      "org.gnome.desktop.interface"]).split():
+        return None
+    if value is None:
+        return query(["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"]).strip().strip("'")
+    run(["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", value])
+    return value
+
+
+def apply_gnome_apps(settings):
+    """GNOME apps dark and in the desktop's colours (on), or back as they were (off). Untouched until chosen."""
+    cfg = settings.get("gnome_apps")
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("dark"), bool):
+        return
+    try:
+        with open(GTK4_CSS, encoding="utf-8") as f:
+            old = f.read()
+    except OSError:
+        old = ""
+    i, j = old.find(GNOME_CSS_BEGIN), old.find(GNOME_CSS_END)
+    rest = (old[:i] + old[j + len(GNOME_CSS_END):].lstrip("\n")) if i >= 0 and j > i else old
+    if cfg["dark"]:
+        new = _gnome_css(saved_accent(settings)) + ("\n" + rest if rest.strip() else "")
+        now = _gsettings_scheme()
+        if now is not None and now != "prefer-dark":
+            if not os.path.exists(GNOME_SCHEME_SAVED) and not DRY:
+                os.makedirs(os.path.dirname(GNOME_SCHEME_SAVED), exist_ok=True)
+                with open(GNOME_SCHEME_SAVED, "w") as f:
+                    f.write(now + "\n")
+            _gsettings_scheme("prefer-dark")
+    else:
+        new = rest
+        try:
+            with open(GNOME_SCHEME_SAVED) as f:
+                before = f.read().strip()
+        except OSError:
+            before = None
+        if before in ("default", "prefer-light", "prefer-dark") and _gsettings_scheme() is not None:
+            _gsettings_scheme(before)
+        if not DRY and before is not None:
+            os.remove(GNOME_SCHEME_SAVED)
+    if new == old:
+        return
+    if not new.strip():
+        if old and not DRY:
+            os.remove(GTK4_CSS)                     # (only our part was in it)
+        return
+    _write_if_changed(GTK4_CSS, new)
 
 
 # ------------------------------------------------------------------ terminal text size (Ghostty, kitty)
@@ -3682,8 +3769,8 @@ def refresh_files(settings):
     global FILES_ONLY
     FILES_ONLY = True
     failed = []
-    for step in (apply_cursor, apply_opacity, apply_themes, apply_terminal_font, apply_colors, apply_gaps, apply_corners,
-                 apply_apps, apply_gestures, apply_bar_blur):
+    for step in (apply_cursor, apply_opacity, apply_themes, apply_terminal_font, apply_colors, apply_gnome_apps, apply_gaps,
+                 apply_corners, apply_apps, apply_gestures, apply_bar_blur):
         try:
             step(settings)
         except Exception as e:  # noqa: BLE001 - one bad setting must not stop the others
@@ -3700,7 +3787,8 @@ def refresh_files(settings):
 def apply_all(settings):
     """Apply every saved setting. One failing step is reported but never stops the others."""
     for step in (apply_mouse, apply_cursor, apply_monitors, apply_opacity, apply_themes, apply_terminal_font, apply_colors,
-                 apply_gaps, apply_corners, apply_apps, apply_sound, apply_gestures, apply_bar_blur, apply_wallcycle):
+                 apply_gnome_apps, apply_gaps, apply_corners, apply_apps, apply_sound, apply_gestures, apply_bar_blur,
+                 apply_wallcycle):
         try:
             step(settings)
         except Exception as e:  # noqa: BLE001 - login must not break on a bad setting
@@ -3729,7 +3817,8 @@ SIDEBAR = (("network", "Network", "\U000F05A9", "network wifi wi-fi wireless int
            ("colors", "Colors", "\U000F03D8", "colors colours accent", 1),
            ("wallpaper", "Wallpaper", "\U000F02E9", "wallpaper background picture photo image slideshow cycle "
                                                       "change rotate folder", 1),
-           ("themes", "Themes", "\U000F018D", "themes terminal ghostty kitty font text size colours", 1),
+           ("themes", "Themes", "\U000F018D", "themes terminal ghostty kitty font text size colours "
+                                                "gnome apps nautilus files dark mode libadwaita", 1),
            ("mouse", "Mouse", "\U000F037D", "mouse touchpad trackpad pointer speed acceleration cursor gestures "
                                               "swipe", 2),
            ("keybindings", "Keybindings", "\U000F030C", "keybindings keyboard shortcuts keys hotkeys apps "
@@ -6433,6 +6522,18 @@ def launch_gui(confirm=True, tab=None):
     gh_themes, ki_themes = list_ghostty_themes(), list_kitty_themes()
     theme_section("ghostty", "Ghostty", gh_themes, saved_t.get("ghostty") or current_theme("ghostty"))
     theme_section("kitty", "kitty", ki_themes, saved_t.get("kitty") or current_theme("kitty"))
+    tp.pack_start(Gtk.Separator(), False, False, 6)
+    gn_t = Gtk.Label(label="GNOME apps", xalign=0)
+    gn_t.get_style_context().add_class("title")
+    tp.pack_start(gn_t, False, False, 0)
+    gn_dark = Gtk.Switch()
+    gn_dark.set_halign(Gtk.Align.START)
+    gn_dark.set_active((settings.get("gnome_apps") or {}).get("dark") is True)
+    tp.pack_start(row("Dark, in the desktop's colours", gn_dark), False, False, 0)
+    tp.pack_start(dim("Nautilus, GNOME Text Editor and other GNOME apps ignore normal GTK themes. On: they turn dark - "
+                      "dark grey with light text, and your accent colour (Colors tab) for selections. This also "
+                      "switches GNOME's own dark-mode setting, so it shows in a GNOME session too; off puts back what "
+                      "it was. Open GNOME apps change when you restart them."), False, False, 0)
     add_page("themes", scrolled(tp))
 
     # ---------------- colors tab
@@ -6952,6 +7053,9 @@ def launch_gui(confirm=True, tab=None):
             safe("text size", apply_terminal_font, settings)
         settings["colors"] = {"accent": acc["v"]}
         safe("colors", apply_colors, settings)
+        if gn_dark.get_active() or "gnome_apps" in settings:
+            settings["gnome_apps"] = {"dark": gn_dark.get_active()}
+            safe("GNOME apps", apply_gnome_apps, settings)
         provider.load_from_data(css_for(acc["v"]))
         settings["gaps"] = {"inner": int(gap_inner.get_value()), "outer": int(gap_outer.get_value()),
                             "smart": gap_smart.get_active(), "corners": int(corner_sc.get_value())}
